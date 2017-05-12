@@ -97,6 +97,7 @@ setup(
             'pixeldrill = datacube_apps.pixeldrill:main [interactive]',
             'movie_generator = datacube_apps.movie_generator:main',
             'datacube-simple-replica = datacube_apps.simple_replica:replicate'
+            'view_nc_dataset = datacube_apps.view_nc_metadata:main',
         ]
     },
 )

@@ -1,9 +1,10 @@
-#!/bin/env python3
 """
 Display embedded metadata from a Data Cube style NetCDF file.
 
 
 """
+from __future__ import absolute_import
+
 import json
 from io import StringIO
 
@@ -32,6 +33,7 @@ def main(filename, output_format, variable_name='dataset', time=0):
 
 
 def format_document(document, language):
+    """Perform syntax highlighting on the document if ``pygments`` is available"""
     try:
         from pygments.lexers import get_lexer_by_name
         from pygments.formatters.terminal import TerminalFormatter
