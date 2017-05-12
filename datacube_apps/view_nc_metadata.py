@@ -5,12 +5,11 @@ Display embedded metadata from a Data Cube style NetCDF file.
 
 """
 import json
+from io import StringIO
 
 import click
 import xarray as xr
 import yaml
-
-from datacube.compat import StringIO
 
 
 @click.command()
