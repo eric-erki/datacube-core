@@ -24,7 +24,8 @@ def main(filename, output_format, variable_name='dataset', time=0):
 
     if output_format == 'json':
         obj = yaml.load(StringIO(document))
-        document = json.dumps(obj, indent=4)
+        # Disable pylint check for the following line for Python 2.7
+        document = json.dumps(obj, indent=4)  # pylint: disable=redefined-variable-type
 
     output = format_document(document, output_format)
     click.echo_via_pager(output)
