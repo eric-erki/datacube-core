@@ -268,3 +268,12 @@ def set_value_at_index(bitmask, index, value):
     else:
         bitmask &= (~bit_val)
     return bitmask
+
+
+def list_mask_value_meaning(flags):
+    for (flag_name, flag_def) in flags.items():
+        if all((isinstance(v, bool) for v in flag_def['values'].values())):
+            yield create_mask_value(flags, **{flag_name: True}) + (flag_name,)
+        else:
+            for meaning in flag_def['values'].values():
+                yield create_mask_value(flags, **{flag_name: meaning}) + (flag_name + '.' + meaning,)

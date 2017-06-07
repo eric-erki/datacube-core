@@ -7,10 +7,12 @@ from __future__ import absolute_import
 import logging
 import numbers
 from datetime import datetime
+from functools import reduce
+import warnings
 
 import numpy
 
-from datacube.storage.masking import describe_flags_def
+from datacube.storage.masking import describe_flags_def, list_mask_value_meaning
 from datacube.utils import geometry, data_resolution_and_offset
 
 # pylint: disable=ungrouped-imports
@@ -119,6 +121,8 @@ def create_variable(nco, name, var, set_crs=False, attrs=None, **kwargs):
         data_var.grid_mapping = 'crs'
     if getattr(var, 'units', None):
         data_var.units = var.units
+    if 'flags_definition' in var.attrs:
+        write_flag_definition(data_var, var.flags_definition)
     data_var.set_auto_maskandscale(False)
     return data_var
 
@@ -224,7 +228,11 @@ def write_flag_definition(variable, flags_definition):
     # write bitflag info
     # Functions for this are stored in Measurements
     variable.QA_index = describe_flags_def(flags_def=flags_definition)
-    variable.flag_masks, variable.valid_range, variable.flag_meanings = flag_mask_meanings(flags_def=flags_definition)
+    masks, values, meanings = list(zip(*list_mask_value_meaning(flags_definition)))
+    variable.flag_masks = numpy.array(masks, dtype=variable.datatype)
+    variable.flag_values = numpy.array(values, dtype=variable.datatype)
+    variable.flag_meanings = ' '.join(meanings)
+    variable.valid_range = numpy.array([0, reduce(lambda x, y: x | y, masks)], dtype=variable.datatype)
 
 
 def netcdfy_coord(data):
@@ -242,6 +250,7 @@ def netcdfy_data(data):
 
 
 def flag_mask_meanings(flags_def):
+    warnings.warn("flag_mask_meanings is deprecated, consider using list_mask_value_meaning.", DeprecationWarning)
     # Filter out any multi-bit mask values since we can't handle them yet
     flags_def = {k: v for k, v in flags_def.items() if isinstance(v['bits'], numbers.Integral)}
     max_bit = max([bit_def['bits'] for bit_def in flags_def.values()])
@@ -261,7 +270,7 @@ def flag_mask_meanings(flags_def):
 
     for name, bitdef in sorted(flags_def.items(), key=by_bits):
         try:
-            true_value = bitdef['values'][1]
+            true_value = bitdef['values']['1']
 
             if true_value is True:
                 meaning = name
