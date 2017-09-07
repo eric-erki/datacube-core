@@ -8,7 +8,7 @@ from datacube.analytics.utils.store_handler import StoreHandler, FunctionTypes
 def test_store_handler():
     # Create a new store handler and flush the redis DB. Normally, the _store variable should never
     # be accessed directly. Flushing will have to be managed carefully (if any flushing at all).
-    sh = StoreHandler('redis')
+    sh = StoreHandler()
     sh._store.flushdb()
 
     # Create 2 users with 6 jobs each. The function simply returns a string denoting the user and
