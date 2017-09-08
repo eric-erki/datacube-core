@@ -22,7 +22,9 @@ addons:
   postgresql: "9.5"
   services:
     - postgresql
-    - redis-server
+
+services:
+  - redis-server
 
 before_install:
   # Create a database for the integration tests.
