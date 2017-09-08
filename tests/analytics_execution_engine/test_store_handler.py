@@ -5,6 +5,7 @@ import pytest
 from datacube.analytics.utils.store_handler import StoreHandler, FunctionTypes
 
 
+@pytest.mark.skip(reason="Have not been able to connect to travis' default redis yet.")
 def test_store_handler():
     # Create a new store handler and flush the redis DB. Normally, the _store variable should never
     # be accessed directly. Flushing will have to be managed carefully (if any flushing at all).
