@@ -50,7 +50,7 @@ class StoreHandler(object):
     K_CANCELLED = 'cancelled'
     K_COUNT = 'total'
 
-    def __init__(self, hostname='localhost', port=6379, db=0):
+    def __init__(self, hostname='127.0.0.1', port=6379, db=0):
         '''Initialise the data store interface.'''
         self.logger = logging.getLogger(self.__class__.__name__)
         self._store = StrictRedis(hostname, port, db)
