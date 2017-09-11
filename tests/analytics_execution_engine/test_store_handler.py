@@ -5,6 +5,18 @@ import pytest
 from datacube.analytics.utils.store_handler import StoreHandler, FunctionTypes
 
 
+def check_redis_binary():
+    try:
+        return subprocess.check_call(['redis-server', '--version']) == 0
+    except:
+        return False
+
+
+have_redis = check_redis_binary()
+skip_if_no_redis = pytest.mark.skipif(not have_redis, reason="Needs redis-server to run")
+
+
+@skip_if_no_redis
 def test_store_handler():
     # Create a new store handler and flush the redis DB. Normally, the _store variable should never
     # be accessed directly. Flushing will have to be managed carefully (if any flushing at all).

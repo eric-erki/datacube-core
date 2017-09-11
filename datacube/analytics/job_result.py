@@ -31,7 +31,7 @@ Note: Interim JobResult Code for incremental testing:
         - Proper EE
 """
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function
 
 import numpy as np
 from pprint import pprint, pformat
