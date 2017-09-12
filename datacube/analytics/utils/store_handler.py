@@ -50,10 +50,10 @@ class StoreHandler(object):
     K_CANCELLED = 'cancelled'
     K_COUNT = 'total'
 
-    def __init__(self, hostname='127.0.0.1', port=6379, db=0):
+    def __init__(self, **redis_config):
         '''Initialise the data store interface.'''
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._store = StrictRedis(hostname, port, db)
+        self._store = StrictRedis(**redis_config)
 
     def _make_key(self, *parts):
         '''Build a redis key using the agreed delimiter.

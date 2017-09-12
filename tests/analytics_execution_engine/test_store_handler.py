@@ -1,26 +1,70 @@
+'''Test the store handler by flushing it, then writing and reading from it.
+
+CAUTION: The database with the last possible index (typically 15) in the store is used. If it ever
+contains any data, that gets wiped out!
+'''
+
 from __future__ import absolute_import
 
 import pytest
+from os.path import expanduser
+from configparser import ConfigParser
 
 from datacube.analytics.utils.store_handler import StoreHandler, FunctionTypes
 
+# Skip all tests if redis cannot be imported
+redis = pytest.importorskip('redis')
 
-def check_redis_binary():
+
+DEFAULT_CONFIG_FILES = [expanduser('~/.datacube.conf'),
+                        expanduser('~/.datacube_integration.conf')]
+'''Config files from which to pull redis config. The `redis` section in any such file gets merged if
+present, later files overwriting earlier ones if the same fields are set again.'''
+
+DEFAULT_REDIS_CONFIG = {
+    'host': '127.0.0.1',
+    'port': 6379,
+    'db': 0,
+    'password': None
+}
+'''Default redis config. It gets merged with/overwritten by the config files.'''
+
+
+@pytest.fixture
+def redis_config():
+    '''Retrieve and test the redis configuration.
+
+    Configuration is retrieved from `DEFAULT_CONFIG_FILES` or `DEFAULT_REDIS_CONFIG`, and then ping
+    the server to check whether it's alive. If so, the config is returned. Otherwise, None is
+    returned and all tests in this file are skipped.
+    '''
+    # Source config
+    redis_config = DEFAULT_REDIS_CONFIG
+    config = ConfigParser()
+    config.read(DEFAULT_CONFIG_FILES)
+    if 'redis' in config:
+        redis_config.update(config['redis'])
+    # Test server
     try:
-        return subprocess.check_call(['redis-server', '--version']) == 0
-    except:
-        return False
+        store = redis.StrictRedis(**redis_config)
+        if store.ping():
+            # Select the DB with last index in the current store
+            redis_config['db'] = int(store.config_get('databases')['databases']) - 1
+            return redis_config
+    except redis.exceptions.ConnectionError as conn_error:
+        pass
+    # Skill all tests
+    pytest.skip('No running redis server found at {}'.format(redis_config))
+    return None
 
 
-have_redis = check_redis_binary()
-skip_if_no_redis = pytest.mark.skipif(not have_redis, reason="Needs redis-server to run")
+def test_store_handler(redis_config):
+    '''Test the store handler by flushing it, then writing and reading from it.
 
-
-@skip_if_no_redis
-def test_store_handler():
-    # Create a new store handler and flush the redis DB. Normally, the _store variable should never
-    # be accessed directly. Flushing will have to be managed carefully (if any flushing at all).
-    sh = StoreHandler()
+    CAUTION: The database with the last possible index (typically 15) in the store is used. If it
+    ever contains any data, that gets wiped out!
+    '''
+    sh = StoreHandler(**redis_config)
     sh._store.flushdb()
 
     # Create 2 users with 6 jobs each. The function simply returns a string denoting the user and
