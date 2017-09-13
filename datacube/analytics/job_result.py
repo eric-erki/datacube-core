@@ -34,6 +34,7 @@ Note: Interim JobResult Code for incremental testing:
 from __future__ import absolute_import, print_function
 
 import numpy as np
+from six import integer_types
 from pprint import pprint, pformat
 
 import datacube
@@ -211,21 +212,32 @@ class LazyArray(object):
                 - unload least used and stream as required from S3
         """
         if self._type == 's3io':
+            if not isinstance(slices, tuple):
+                slices = (slices,)
+
             bounded_slice = ()
             for idx, val in enumerate(slices):
-                if val.start is None and val.stop is None:
-                    bounded_slice += (slice(0, self._shape[idx]), )
-                elif val.start >= 0 and val.stop <= self._shape[idx]:
-                    bounded_slice += (val,)
-                else:
-                    raise Exception("Slice: " + str(slices) + " is not within shape: : " + str(self._shape))
+                if isinstance(val, integer_types):
+                    if val < 0 or val+1 >= self._shape[idx]:
+                        raise Exception("Index: " + val + " is out of bounds of: " + str(self._shape[idx]))
+                    bounded_slice += (slice(val, val+1),)
+                elif isinstance(val, slice):
+                    if val.start is None and val.stop is None:
+                        bounded_slice += (slice(0, self._shape[idx]), )
+                    elif val.start >= 0 and val.stop <= self._shape[idx]:
+                        bounded_slice += (val,)
+                    else:
+                        raise Exception("Slice: " + str(slices) + " is not within shape: : " + str(self._shape))
+
+            for idx, val in enumerate(range(len(self._shape) - len(bounded_slice))):
+                bounded_slice += (slice(0, self._shape[idx]),)
 
             s3lio = S3LIO(True, True, None, 30)
-            yield s3lio.get_data_unlabeled(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice,
-                                           self._bucket)
+            return s3lio.get_data_unlabeled(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice,
+                                            self._bucket)
         elif self._type == 'dc.load':
             dc = datacube.Datacube(app='dc-example')
-            yield dc.load(self._query, use_threads=True)
+            return dc.load(self._query, use_threads=True)
         else:
             raise Exception("Undefined storage type")
 
