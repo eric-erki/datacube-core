@@ -6,9 +6,10 @@ contains any data, that gets wiped out!
 
 from __future__ import absolute_import
 
-import pytest
 from os.path import expanduser
+from pathlib import Path
 from configparser import ConfigParser
+import pytest
 
 from datacube.analytics.utils.store_handler import StoreHandler, FunctionTypes
 
@@ -17,7 +18,10 @@ redis = pytest.importorskip('redis')
 
 
 DEFAULT_CONFIG_FILES = [expanduser('~/.datacube.conf'),
-                        expanduser('~/.datacube_integration.conf')]
+                        expanduser('~/.datacube_integration.conf'),
+                        str(Path(__file__).parent.parent.joinpath('agdcintegration.conf')),
+                        str(Path(__file__).parent.joinpath('./.datacube.conf')),
+                        str(Path(__file__).parent.joinpath('./.datacube_integration.conf'))]
 '''Config files from which to pull redis config. The `redis` section in any such file gets merged if
 present, later files overwriting earlier ones if the same fields are set again.'''
 
@@ -50,6 +54,7 @@ def redis_config():
         if store.ping():
             # Select the DB with last index in the current store
             redis_config['db'] = int(store.config_get('databases')['databases']) - 1
+            print('\nUsing redis config: {}'.format(redis_config))
             return redis_config
     except redis.exceptions.ConnectionError as conn_error:
         pass
@@ -110,3 +115,5 @@ def test_store_handler(redis_config):
         assert function.function() == 'User {:03d}, job {:03d}'.format(expected_user, expected_job)
         assert function.function_type == funcTypes[(job_id - 1) % 3]
         assert data == 'Data for {:03d}-{:03d}'.format(expected_user, expected_job)
+
+    sh._store.flushdb()
