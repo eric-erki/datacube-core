@@ -15,9 +15,11 @@ Note: Interim JobResult Code for incremental testing:
             - saves mock data to s3
             - returns Job Result object
         - Job Result Object
+            - Calls not routed to AE/EE but to Redis API
     Test 2:
         - Redis state/health store
         - Job Result Object
+            - Calls routed to AE/EE
         - Testbed AE/EE
             - stores real state
             - stores mock health in redis
@@ -27,6 +29,7 @@ Note: Interim JobResult Code for incremental testing:
     Test 3:
         - Redis state/health store
         - Job Result Object
+            - Calls routed to AE/EE
         - Proper AE
         - Proper EE
 """
@@ -35,7 +38,13 @@ from __future__ import absolute_import, print_function
 
 import numpy as np
 from six import integer_types
+from six.moves import zip
+from itertools import repeat
 from pprint import pprint, pformat
+from dask.base import tokenize
+from dask.array import Array
+from enum import Enum
+import xarray as xr
 
 import datacube
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
@@ -152,6 +161,17 @@ class Dotify(dict):
         __delattr__ = dict.__delitem__
 
 
+class LoadType(Enum):
+    EAGER = 1
+    EAGER_CACHED = 2
+    DASK = 3
+
+
+class IndexType(Enum):
+    S3IO = 1
+    DC_LOAD = 2
+
+
 class LazyArray(object):
     """Looks and feels like a numpy/array array but is mapped to S3/Disk
     """
@@ -173,18 +193,19 @@ class LazyArray(object):
         # unpack result_info and popular internal variables
         self._id = self._array_info['id']
         self._type = self._array_info['type']
+        self._load_type = self._array_info['load_type']
 
-        if self._type == 's3io':
+        if self._type == IndexType.S3IO:
             self._base_name = self._array_info['base_name']
             self._bucket = self._array_info['bucket']
             self._shape = self._array_info['shape']
             self._chunk = self._array_info['chunk']
             self._dtype = self._array_info['dtype']
-        elif self._type == 'dc.load':
+        elif self._type == IndexType.DC_LOAD:
             self._query = self._array_info['query']
 
     def to_dict(self):
-        if self._type == 's3io':
+        if self._type == IndexType.S3IO:
             return {
                 'id': self._id,
                 'base_name': self._base_name,
@@ -193,7 +214,7 @@ class LazyArray(object):
                 'chunk': self._chunk,
                 'dtype': self._dtype
             }
-        elif self._type == 'dc.load':
+        elif self._type == IndexType.DC_LOAD:
             return {'query': self._query}
 
     def __repr__(self):
@@ -202,44 +223,94 @@ class LazyArray(object):
     def __str__(self):
         return pformat(self.to_dict(), indent=2)
 
+    # pylint: disable=too-many-locals
     def __getitem__(self, slices):
         """Slicing operator to retrieve data stored on S3/DataCube
         Todo:
-            - check chunks in cache
-            - retrieve chunks not stored in cache and cache
-            - map returned array to chunk cache
             - chunk cache memory management in case near memory limit
                 - unload least used and stream as required from S3
         """
-        if self._type == 's3io':
+        def dask_array(zipped, shape, chunks, dtype, bucket):
+
+            dsk = {}
+            name = zipped[0][0]
+            for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
+                required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
+                idx = (name,) + np.unravel_index(chunk_id, chunk_shape)
+                s3lio = S3LIO(True, True, None, 30)
+                dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
+
+            return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
+
+        if self._type == IndexType.S3IO:
             if not isinstance(slices, tuple):
                 slices = (slices,)
 
-            bounded_slice = ()
-            for idx, val in enumerate(slices):
-                if isinstance(val, integer_types):
-                    if val < 0 or val+1 >= self._shape[idx]:
-                        raise Exception("Index: " + val + " is out of bounds of: " + str(self._shape[idx]))
-                    bounded_slice += (slice(val, val+1),)
-                elif isinstance(val, slice):
-                    if val.start is None and val.stop is None:
-                        bounded_slice += (slice(0, self._shape[idx]), )
-                    elif val.start >= 0 and val.stop <= self._shape[idx]:
-                        bounded_slice += (val,)
-                    else:
-                        raise Exception("Slice: " + str(slices) + " is not within shape: : " + str(self._shape))
-
-            for idx, val in enumerate(range(len(self._shape) - len(bounded_slice))):
-                bounded_slice += (slice(0, self._shape[idx]),)
+            bounded_slice = self._bounded_slice(slices, self._shape)
 
             s3lio = S3LIO(True, True, None, 30)
-            return s3lio.get_data_unlabeled(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice,
-                                            self._bucket)
-        elif self._type == 'dc.load':
+            keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
+                s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice, False)
+
+            zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
+
+            if self._load_type == LoadType.EAGER:
+                return xr.DataArray(s3lio.get_data_unlabeled(self._base_name, self._shape, self._chunk, self._dtype,
+                                                             bounded_slice, self._bucket))
+            elif self._load_type == LoadType.EAGER_CACHED:
+                missing_chunks = []
+                for a in zipped:
+                    if a[5] not in self._cache:
+                        missing_chunks.append(a)
+
+                received_chunks = s3lio.get_data_full_chunks_unlabeled(missing_chunks, self._dtype, self._bucket)
+                # do mp version
+
+                if received_chunks:
+                    self._cache.update(received_chunks)
+
+                # build array from cache and return
+                data = np.zeros(shape=[s.stop - s.start for s in bounded_slice], dtype=self._dtype)
+
+                for _, data_slice, local_slice, _, _, chunk_id in zipped:
+                    data[data_slice] = self._cache[chunk_id][local_slice]
+
+                return data
+            elif self._load_type == LoadType.DASK:
+                full_slice = self._bounded_slice((slice(None, None),), self._shape)
+
+                s3lio = S3LIO(True, True, None, 30)
+                keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
+                    s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, full_slice, False)
+
+                zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
+                return xr.DataArray(dask_array(zipped, self._shape, self._chunk, self._dtype, self._bucket)
+                                    [bounded_slice])
+        elif self._type == IndexType.DC_LOAD:
             dc = datacube.Datacube(app='dc-example')
             return dc.load(self._query, use_threads=True)
         else:
             raise Exception("Undefined storage type")
+
+    def _bounded_slice(self, slices, shape):
+        bounded_slice = ()
+        for idx, val in enumerate(slices):
+            if isinstance(val, integer_types):
+                if val < 0 or val+1 >= self._shape[idx]:
+                    raise Exception("Index: " + val + " is out of bounds of: " + str(self._shape[idx]))
+                bounded_slice += (slice(val, val+1),)
+            elif isinstance(val, slice):
+                if val.start is None and val.stop is None:
+                    bounded_slice += (slice(0, self._shape[idx]), )
+                elif val.start >= 0 and val.stop <= self._shape[idx]:
+                    bounded_slice += (val,)
+                else:
+                    raise Exception("Slice: " + str(slices) + " is not within shape: : " + str(self._shape))
+
+        for idx, val in enumerate(range(len(self._shape) - len(bounded_slice))):
+            bounded_slice += (slice(0, self._shape[idx]),)
+
+        return bounded_slice
 
     def __setitem__(self, slices, value):
         """Slicing operator to modify data stored on S3/DataCube

@@ -56,7 +56,7 @@ class S3AIO(object):
         """
         return np.unravel_index(index, shape)
 
-    def get_point(self, index_point, shape, dtype, s3_bucket, s3_key):
+    def get_point(self, index_point, shape, dtype, s3_bucket, s3_key, new_session=False):
         """Gets a point in the nd array stored in S3.
 
         Only works if compression is off.
@@ -66,12 +66,15 @@ class S3AIO(object):
         :param numpy.dtype: dtype of the stored data.
         :param str s3_bucket: S3 bucket name
         :param str s3_key: S3 key name
+        :param bool new_session: Flag to create a new session or reuse existing session.
+            True: create new session
+            False: reuse existing session
         :return: Returns the point data.
         """
         item_size = np.dtype(dtype).itemsize
         idx = self.to_1d(index_point, shape) * item_size
         if self.enable_compression:
-            b = self.s3io.get_bytes(s3_bucket, s3_key)
+            b = self.s3io.get_bytes(s3_bucket, s3_key, new_session)
             cctx = zstd.ZstdDecompressor()
             b = cctx.decompress(b)[idx:idx+item_size]
         else:
@@ -83,7 +86,8 @@ class S3AIO(object):
         return [sl.start == 0 and sl.stop == sh and (sl.step is None or sl.step == 1)
                 for sl, sh in zip(slices, shape)]
 
-    def get_slice(self, array_slice, shape, dtype, s3_bucket, s3_key):  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals
+    def get_slice(self, array_slice, shape, dtype, s3_bucket, s3_key, new_session=False):
         """Gets a slice of the nd array stored in S3.
 
         Only works if compression is off.
@@ -93,6 +97,9 @@ class S3AIO(object):
         :param numpy.dtype: dtype of the stored data.
         :param str s3_bucket: S3 bucket name
         :param str s3_key: S3 key name
+        :param bool new_session: Flag to create a new session or reuse existing session.
+            True: create new session
+            False: reuse existing session
         :return: Returns the data slice.
         """
         # convert array_slice into into sub-slices of maximum contiguous blocks
@@ -105,7 +112,7 @@ class S3AIO(object):
         #       - data contiguity
 
         if self.enable_compression:
-            return self.get_slice_by_bbox(array_slice, shape, dtype, s3_bucket, s3_key)
+            return self.get_slice_by_bbox(array_slice, shape, dtype, s3_bucket, s3_key, new_session)
 
         # truncate array_slice to shape
         # array_slice = [slice(max(0, s.start) - min(sh, s.stop)) for s, sh in zip(array_sliced, shape)]
@@ -132,7 +139,7 @@ class S3AIO(object):
             s3_start = (np.ravel_multi_index(cell+tuple([s.start for s in sub_range]), shape)) * item_size
             s3_end = (np.ravel_multi_index(cell+tuple([s.stop-1 for s in sub_range]), shape)+1) * item_size
             # print(s3_start, s3_end)
-            data = self.s3io.get_byte_range(s3_bucket, s3_key, s3_start, s3_end)
+            data = self.s3io.get_byte_range(s3_bucket, s3_key, s3_start, s3_end, new_session)
             results.append((cell, sub_range, data))
 
         result = np.empty([s.stop - s.start for s in array_slice], dtype=dtype)
@@ -147,7 +154,8 @@ class S3AIO(object):
 
         return result
 
-    def get_slice_mp(self, array_slice, shape, dtype, s3_bucket, s3_key):  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals
+    def get_slice_mp(self, array_slice, shape, dtype, s3_bucket, s3_key, new_session=False):
         """Gets a slice of the nd array stored in S3 in parallel.
 
         Only works if compression is off.
@@ -157,17 +165,20 @@ class S3AIO(object):
         :param numpy.dtype: dtype of the stored data.
         :param str s3_bucket: S3 bucket name
         :param str s3_key: S3 key name
+        :param bool new_session: Flag to create a new session or reuse existing session.
+            True: create new session
+            False: reuse existing session
         :return: Returns the data slice.
         """
         # pylint: disable=too-many-locals
-        def work_get_slice(block, array_name, offset, s3_bucket, s3_key, shape, dtype):
+        def work_get_slice(block, array_name, offset, s3_bucket, s3_key, shape, dtype, new_session):
             result = sa.attach(array_name)
             cell, sub_range = block
 
             item_size = np.dtype(dtype).itemsize
             s3_start = (np.ravel_multi_index(cell+tuple([s.start for s in sub_range]), shape)) * item_size
             s3_end = (np.ravel_multi_index(cell+tuple([s.stop-1 for s in sub_range]), shape)+1) * item_size
-            data = self.s3io.get_byte_range(s3_bucket, s3_key, s3_start, s3_end)
+            data = self.s3io.get_byte_range(s3_bucket, s3_key, s3_start, s3_end, new_session)
 
             t = [slice(x.start-o, x.stop-o) if isinstance(x, slice) else x-o for x, o in
                  zip(cell+tuple(sub_range), offset)]
@@ -200,12 +211,13 @@ class S3AIO(object):
         shared_array = sa.attach(array_name)
 
         self.pool.map(work_get_slice, blocks, repeat(array_name), repeat(offset), repeat(s3_bucket),
-                      repeat(s3_key), repeat(shape), repeat(dtype))
+                      repeat(s3_key), repeat(shape), repeat(dtype), repeat(new_session))
 
         sa.delete(array_name)
         return shared_array
 
-    def get_slice_by_bbox(self, array_slice, shape, dtype, s3_bucket, s3_key):  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals
+    def get_slice_by_bbox(self, array_slice, shape, dtype, s3_bucket, s3_key, new_session=False):
         """Gets a slice of the nd array stored in S3 by bounding box.
 
         :param tuple array_slice: tuple of slices to retrieve.
@@ -213,6 +225,9 @@ class S3AIO(object):
         :param numpy.dtype: dtype of the stored data.
         :param str s3_bucket: S3 bucket name
         :param str s3_key: S3 key name
+        :param bool new_session: Flag to create a new session or reuse existing session.
+            True: create new session
+            False: reuse existing session
         :return: Returns the data slice.
         """
         # Todo:
@@ -231,7 +246,7 @@ class S3AIO(object):
         # else:
         #     d = self.s3io.get_byte_range_mp(s3_bucket, s3_key, s3_begin, s3_end, 5*1024*1024)
 
-        d = self.s3io.get_bytes(s3_bucket, s3_key)
+        d = self.s3io.get_bytes(s3_bucket, s3_key, new_session)
 
         if self.enable_compression:
             cctx = zstd.ZstdDecompressor()

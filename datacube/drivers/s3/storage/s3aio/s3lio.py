@@ -249,6 +249,77 @@ class S3LIO(object):
 
     # integer index data retrieval.
     # pylint: disable=too-many-locals
+    def build_chunk_list(self, base_location, macro_shape, micro_shape, dtype, array_slice, use_hash=False):
+        """Gets integer indexed data from S3.
+
+        :param str base_location: The base location of the requested data.
+        :param tuple macro_shape: The macro shape of the data.
+        :param tuple micro_shape: The micro shape of the data.
+        :param numpy.dtype dtype: The data type of the data.
+        :param tuple array_slice: The requested nD array slice.
+        :param str s3_bucket: The S3 bucket name.
+        :param bool use_hash: Whether to prefix the key with a deterministic hash.
+        :return: The nd array.
+        """
+
+        # data slices for each chunk
+        slices = list(self.chunk_indices_nd(macro_shape, micro_shape, array_slice))
+
+        # chunk id's for each data slice
+        slice_starts = [tuple([s.start for s in s]) for s in slices]
+
+        chunk_ids = [self.s3aio.to_1d(tuple(np.floor([(p/float(s)) for p, s, in zip(c, micro_shape)]).astype(int)),
+                                      tuple([(int(np.ceil(a/float(b)))) for a, b in zip(macro_shape, micro_shape)]))
+                     for c in slice_starts]
+
+        # chunk_sizes for each chunk
+        chunk_shapes = list(self.chunk_indices_nd(macro_shape, micro_shape, None, True))
+        chunk_shapes = [chunk_shapes[c] for c in chunk_ids]
+
+        # compute keys
+        keys = ['_'.join([base_location, str(i)]) for i in chunk_ids]
+        if use_hash:
+            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
+
+        # calculate offsets
+        offset = tuple([i.start for i in array_slice])
+        # calculate data slices
+        data_slices = [tuple([slice(s.start-o, s.stop-o) for s, o in zip(s, offset)]) for s in slices]
+        # calculate local slices
+        origin = [[s.start % cs if s.start >= cs else s.start for s, cs in zip(s, micro_shape)] for s in slices]
+        size = [[s.stop-s.start for s in s] for s in data_slices]
+        local_slices = [[slice(o, o+s) for o, s in zip(o, s)] for o, s in zip(origin, size)]
+
+        return keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids
+
+    # integer index data retrieval.
+    # pylint: disable=too-many-locals
+    def get_data_chunks_unlabeled(self, chunks, dtype, s3_bucket):
+        slices = {}
+        for s3_key, data_slice, local_slice, shape, _, cid in chunks:
+            slices[cid] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key)
+        return slices
+
+    # integer index data retrieval.
+    # pylint: disable=too-many-locals
+    def get_data_full_chunks_unlabeled(self, chunks, dtype, s3_bucket):
+        slices = {}
+        for s3_key, data_slice, local_slice, shape, offset, cid in chunks:
+            full_slice = ()
+            for i in shape:
+                full_slice += (slice(0, i),)
+            slices[cid] = self.s3aio.get_slice_by_bbox(full_slice, shape, dtype, s3_bucket, s3_key)
+        return slices
+
+    def get_data_single_chunks_unlabeled(self, chunks, dtype, s3_bucket):
+        for s3_key, data_slice, local_slice, shape, offset, cid in chunks:
+            full_slice = ()
+            for i in shape:
+                full_slice += (slice(0, i),)
+            return self.s3aio.get_slice_by_bbox(full_slice, shape, dtype, s3_bucket, s3_key, True)
+
+    # integer index data retrieval.
+    # pylint: disable=too-many-locals
     def get_data_unlabeled(self, base_location, macro_shape, micro_shape, dtype, array_slice, s3_bucket,
                            use_hash=False):
         """Gets integer indexed data from S3.
@@ -270,37 +341,12 @@ class S3LIO(object):
         #
         # element_ids = [np.ravel_multi_index(tuple([s.start for s in s]), macro_shape) for s in slices]
 
-        # data slices for each chunk
-        slices = list(self.chunk_indices_nd(macro_shape, micro_shape, array_slice))
-
-        # chunk id's for each data slice
-        slice_starts = [tuple([s.start for s in s]) for s in slices]
-
-        chunk_ids = [self.s3aio.to_1d(tuple(np.floor([(p/float(s)) for p, s, in zip(c, micro_shape)]).astype(int)),
-                                      tuple([(int(np.ceil(a/float(b)))) for a, b in zip(macro_shape, micro_shape)]))
-                     for c in slice_starts]
-
-        # chunk_sizes for each chunk
-        chunk_shapes = list(self.chunk_indices_nd(macro_shape, micro_shape, None, True))
-        chunk_shapes = [chunk_shapes[c] for c in chunk_ids]
-
-        # compute keys
-        keys = ['_'.join([base_location, str(i)]) for i in chunk_ids]
-        if use_hash:
-            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
-
-        data = np.zeros(shape=[s.stop - s.start for s in array_slice], dtype=dtype)
-
-        # calculate offsets
-        offset = tuple([i.start for i in array_slice])
-        # calculate data slices
-        data_slices = [tuple([slice(s.start-o, s.stop-o) for s, o in zip(s, offset)]) for s in slices]
-        # calculate local slices
-        origin = [[s.start % cs if s.start >= cs else s.start for s, cs in zip(s, micro_shape)] for s in slices]
-        size = [[s.stop-s.start for s in s] for s in data_slices]
-        local_slices = [[slice(o, o+s) for o, s in zip(o, s)] for o, s in zip(origin, size)]
+        keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
+            self.build_chunk_list(base_location, macro_shape, micro_shape, dtype, array_slice, use_hash)
 
         zipped = zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset))
+
+        data = np.zeros(shape=[s.stop - s.start for s in array_slice], dtype=dtype)
 
         # get the slices and populate the data array.
         for s3_key, data_slice, local_slice, shape, offset in zipped:
@@ -332,40 +378,13 @@ class S3LIO(object):
             result = sa.attach(array_name)
             result[data_slice] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key)
 
-        # data slices for each chunk
-        slices = list(self.chunk_indices_nd(macro_shape, micro_shape, array_slice))
-
-        # chunk id's for each data slice
-        slice_starts = [tuple([s.start for s in s]) for s in slices]
-
-        chunk_ids = [self.s3aio.to_1d(tuple(np.floor([(p/float(s)) for p, s, in zip(c, micro_shape)]).astype(int)),
-                                      tuple([(int(np.ceil(a/float(b)))) for a, b in zip(macro_shape, micro_shape)]))
-                     for c in slice_starts]
-
-        # chunk_sizes for each chunk
-        chunk_shapes = list(self.chunk_indices_nd(macro_shape, micro_shape, None, True))
-        chunk_shapes = [chunk_shapes[c] for c in chunk_ids]
-
-        # compute keys
-        keys = ['_'.join([base_location, str(i)]) for i in chunk_ids]
-        if use_hash:
-            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
+        keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
+            self.build_chunk_list(base_location, macro_shape, micro_shape, dtype, array_slice, use_hash)
 
         # create shared array
         array_name = '_'.join(['S3LIO', str(uuid.uuid4()), str(os.getpid())])
         sa.create(array_name, shape=[s.stop - s.start for s in array_slice], dtype=dtype)
         data = sa.attach(array_name)
-
-        # calculate offsets
-        offset = tuple([i.start for i in array_slice])
-        # calculate data slices
-        data_slices = [tuple([slice(s.start-o, s.stop-o) for s, o in zip(s, offset)]) for s in slices]
-        # calculate local slices
-        origin = [[s.start % cs if s.start >= cs else s.start for s, cs in zip(s, micro_shape)] for s in slices]
-        size = [[s.stop-s.start for s in s] for s in data_slices]
-        local_slices = [[slice(o, o+s) for o, s in zip(o, s)] for o, s in zip(origin, size)]
-
-        zipped = zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset))
 
         self.pool.map(work_data_unlabeled, repeat(array_name), keys, data_slices, local_slices, chunk_shapes,
                       repeat(offset))
