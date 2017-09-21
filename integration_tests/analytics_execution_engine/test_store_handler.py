@@ -11,6 +11,7 @@ from pathlib import Path
 from configparser import ConfigParser
 import pytest
 
+import datacube.analytics.job_result
 from datacube.analytics.utils.store_handler import *
 
 # Skip all tests if redis cannot be imported
@@ -120,6 +121,7 @@ def test_invalid_function_metadata():
 
 def test_add_job_invalid(store_handler):
     '''Test the addition of jobs with invalid parameters.'''
+    store_handler._store.flushdb()
     # Invalid job: not function (among others)
     with pytest.raises(ValueError):
         store_handler.add_job(None, None, None, None)
@@ -148,7 +150,9 @@ def test_add_job(store_handler, user_data):
         [u'functions:{}'.format(i) for i in range(1, num_jobs + 1)] +
         [u'data:{}'.format(i) for i in range(1, num_jobs + 1)] +
         [u'jobs:{}'.format(i) for i in range(1, num_jobs + 1)] +
+        [u'jobs:stats:{}'.format(i) for i in range(1, num_jobs + 1)] +
         [u'results:{}'.format(i) for i in range(1, len(descriptors) + 1)] +
+        [u'results:stats:{}'.format(i) for i in range(1, len(descriptors) + 1)] +
         [u'functions:total', u'data:total', u'jobs:total', u'jobs:queued', u'results:total']
     )
     assert str(store_handler) == 'Store keys: {}'.format(expected_keys)
@@ -176,17 +180,30 @@ def test_add_job(store_handler, user_data):
         assert data == 'Data for {:03d}-{:03d}'.format(expected_user, expected_job)
 
 
-def test_invalid_set_job_status(store_handler):
-    '''Test set_job_status with invalid values.'''
-    # Invalid job id: not in store
+def test_get_job_status(store_handler, user_data):
+    '''Test get job status.'''
+    store_handler._store.flushdb()
+    job_ids_orig = []
+    descriptors = []
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            results = []
+            for result in job['results']:
+                results.append(ResultMetadata(result['result_type'], result['descriptor']))
+                descriptors.append(result['descriptor'])
+            result_ids = store_handler.add_result(results)
+            job_ids_orig.append(store_handler.add_job(job['job_type'],
+                                                      job['function'],
+                                                      job['data'],
+                                                      result_ids))
+    for job_id in job_ids_orig:
+        assert store_handler.get_job_status(job_id) == JobStatuses.QUEUED
+
+    # Check invalid inputs raise an error
     with pytest.raises(ValueError):
-        store_handler.set_job_status(10000, JobStatuses.COMPLETED)
-    # Invalid status: int instead of Enum
+        status = store_handler.get_job_status(0)
     with pytest.raises(ValueError):
-        store_handler.set_job_status(9, 1)
-    # Invalid status: string instead of Enum
-    with pytest.raises(ValueError):
-        store_handler.set_job_status(9, 'Hello')
+        status = store_handler.get_job_status('Hello')
 
 
 def test_set_job_status(store_handler, user_data):
@@ -206,19 +223,38 @@ def test_set_job_status(store_handler, user_data):
                                                       job['data'],
                                                       result_ids))
     store_handler.set_job_status(3, JobStatuses.RUNNING)
-    store_handler.set_job_status(4, JobStatuses.COMPLETED)
-    store_handler.set_job_status(5, JobStatuses.CANCELLED)
-    store_handler.set_job_status(6, JobStatuses.ERRORED)
-    print('\nAll lists after status change:\n{}'.format(get_all_lists(store_handler)))
-    assert store_handler.queued_jobs() == list(range(1, 3)) + list(range(7, 13))
     assert store_handler.running_jobs() == [3]
+
+    store_handler.set_job_status(3, JobStatuses.COMPLETED)
+    store_handler.set_job_status(4, JobStatuses.COMPLETED)
+    assert store_handler.completed_jobs() == [3, 4]
+
+    store_handler.set_job_status(5, JobStatuses.CANCELLED)
+    assert store_handler.cancelled_jobs() == [5]
+
+    store_handler.set_job_status(3, JobStatuses.ERRORED)
+    store_handler.set_job_status(6, JobStatuses.ERRORED)
+    assert store_handler.errored_jobs() == [3, 6]
+
+    # print('\nAll lists after status change:\n{}'.format(get_all_lists(store_handler)))
+    assert store_handler.queued_jobs() == list(range(1, 3)) + list(range(7, 13))
+    assert store_handler.running_jobs() == []
     assert store_handler.completed_jobs() == [4]
     assert store_handler.cancelled_jobs() == [5]
-    assert store_handler.errored_jobs() == [6]
+    assert store_handler.errored_jobs() == [3, 6]
 
-    # Check invalid input raises an error
+    # Invalid job id: not in store
+    with pytest.raises(ValueError):
+        store_handler.set_job_status(0, JobStatuses.COMPLETED)
+    # Invalid job id: string
+    with pytest.raises(ValueError):
+        store_handler.set_job_status('Hello', JobStatuses.COMPLETED)
+    # Invalid status: int instead of Enum
     with pytest.raises(ValueError):
         store_handler.set_job_status(9, 1)
+    # Invalid status: string instead of Enum
+    with pytest.raises(ValueError):
+        store_handler.set_job_status(9, 'Hello')
 
 
 def test_add_result(store_handler, user_data):
@@ -257,11 +293,11 @@ def test_add_result(store_handler, user_data):
             assert result.descriptor == '{}-{:03d}'.format(data.replace('Data', 'Descriptor'), res)
         checked += 1
     assert checked > 0, 'No results to assess, please check test'
-    store_handler._store.flushdb()
 
 
 def test_add_result_invalid(store_handler):
     '''Test exceptions on the addition of invalid result parameters.'''
+    store_handler._store.flushdb()
     with pytest.raises(ValueError):
         result_meta = ResultMetadata(1, 'Invalid result type')
     with pytest.raises(ValueError):
@@ -270,3 +306,66 @@ def test_add_result_invalid(store_handler):
         store_handler.add_result(None)
     with pytest.raises(ValueError):
         store_handler.add_result('Hello')
+
+
+def test_get_result_status(store_handler, user_data):
+    '''Test get result status.'''
+    store_handler._store.flushdb()
+    job_ids_orig = []
+    result_ids_orig = []
+    descriptors = []
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            results = []
+            for result in job['results']:
+                results.append(ResultMetadata(result['result_type'], result['descriptor']))
+                descriptors.append(result['descriptor'])
+            result_ids = store_handler.add_result(results)
+            result_ids_orig += result_ids
+            job_ids_orig.append(store_handler.add_job(job['job_type'],
+                                                      job['function'],
+                                                      job['data'],
+                                                      result_ids))
+    for result_id in result_ids_orig:
+        assert store_handler.get_result_status(result_id) == JobStatuses.QUEUED
+
+    # Check invalid inputs raise an error
+    with pytest.raises(ValueError):
+        status = store_handler.get_result_status(0)
+    with pytest.raises(ValueError):
+        status = store_handler.get_result_status('Hello')
+
+
+def test_set_result_status(store_handler, user_data):
+    '''Test the modification of result status in the store.'''
+    store_handler._store.flushdb()
+    job_ids_orig = []
+    descriptors = []
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            results = []
+            for result in job['results']:
+                results.append(ResultMetadata(result['result_type'], result['descriptor']))
+                descriptors.append(result['descriptor'])
+            result_ids = store_handler.add_result(results)
+            job_ids_orig.append(store_handler.add_job(job['job_type'],
+                                                      job['function'],
+                                                      job['data'],
+                                                      result_ids))
+    result_id = 3  # Random existing result ID
+    for status in JobStatuses:
+        store_handler.set_result_status(result_id, JobStatuses.RUNNING)
+        store_handler.get_result_status(result_id) == status
+
+    # Invalid result id: not in store
+    with pytest.raises(ValueError):
+        store_handler.set_result_status(0, JobStatuses.COMPLETED)
+    # Invalid result id: string
+    with pytest.raises(ValueError):
+        store_handler.set_result_status('Hello', JobStatuses.COMPLETED)
+    # Invalid status: int instead of Enum
+    with pytest.raises(ValueError):
+        store_handler.set_result_status(9, 1)
+    # Invalid status: string instead of Enum
+    with pytest.raises(ValueError):
+        store_handler.set_result_status(9, 'Hello')

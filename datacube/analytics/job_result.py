@@ -47,6 +47,7 @@ from enum import Enum
 import xarray as xr
 
 import datacube
+from .utils.store_handler import ResultTypes
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
@@ -101,10 +102,8 @@ class Job(object):
 
     def __init__(self, job_info):
         self._job_info = job_info
-        """
-        # unpack result_info and popular internal variables
         self._id = self._job_info['id']
-        """
+        # unpack other required info
 
     def to_dict(self):
         return {
@@ -167,11 +166,6 @@ class LoadType(Enum):
     DASK = 3
 
 
-class IndexType(Enum):
-    S3IO = 1
-    DC_LOAD = 2
-
-
 class LazyArray(object):
     """Looks and feels like a numpy/array array but is mapped to S3/Disk
     """
@@ -195,17 +189,17 @@ class LazyArray(object):
         self._type = self._array_info['type']
         self._load_type = self._array_info['load_type']
 
-        if self._type == IndexType.S3IO:
+        if self._type == ResultTypes.S3IO:
             self._base_name = self._array_info['base_name']
             self._bucket = self._array_info['bucket']
             self._shape = self._array_info['shape']
             self._chunk = self._array_info['chunk']
             self._dtype = self._array_info['dtype']
-        elif self._type == IndexType.DC_LOAD:
+        elif self._type == ResultTypes.DC_LOAD:
             self._query = self._array_info['query']
 
     def to_dict(self):
-        if self._type == IndexType.S3IO:
+        if self._type == ResultTypes.S3IO:
             return {
                 'id': self._id,
                 'base_name': self._base_name,
@@ -214,7 +208,7 @@ class LazyArray(object):
                 'chunk': self._chunk,
                 'dtype': self._dtype
             }
-        elif self._type == IndexType.DC_LOAD:
+        elif self._type == ResultTypes.DC_LOAD:
             return {'query': self._query}
 
     def __repr__(self):
@@ -242,7 +236,7 @@ class LazyArray(object):
 
             return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
 
-        if self._type == IndexType.S3IO:
+        if self._type == ResultTypes.S3IO:
             if not isinstance(slices, tuple):
                 slices = (slices,)
 
@@ -286,7 +280,7 @@ class LazyArray(object):
                 zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
                 return xr.DataArray(dask_array(zipped, self._shape, self._chunk, self._dtype, self._bucket)
                                     [bounded_slice])
-        elif self._type == IndexType.DC_LOAD:
+        elif self._type == ResultTypes.DC_LOAD:
             dc = datacube.Datacube(app='dc-example')
             return dc.load(self._query, use_threads=True)
         else:

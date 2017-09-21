@@ -4,10 +4,10 @@
 from __future__ import absolute_import
 
 import logging
-from enum import Enum
+from enum import Enum, IntEnum
 from collections import OrderedDict
 
-from redis import StrictRedis
+from redis import StrictRedis, WatchError
 from dill import loads, dumps
 
 
@@ -18,8 +18,10 @@ class FunctionTypes(Enum):
     DSL = 3
 
 
-class JobStatuses(Enum):
-    '''Valid job statuses.'''
+class JobStatuses(IntEnum):
+    '''Valid job/result statuses.
+
+    IntEnum is used as the value gets stored in the stats hash.'''
     QUEUED = 1
     RUNNING = 2
     COMPLETED = 3
@@ -38,7 +40,7 @@ class FunctionMetadata(object):
     '''Function and its metadata.'''
     def __init__(self, function_type, function):
         if function_type not in FunctionTypes:
-            raise ValueError('Invalid function type: %s', function_type)
+            raise ValueError('Invalid function type: {}'.format(function_type))
         self.function_type = function_type
         self.function = function
 
@@ -58,9 +60,14 @@ class ResultMetadata(object):
     '''Result metadata.'''
     def __init__(self, result_type, descriptor):
         if result_type not in ResultTypes:
-            raise ValueError('Invalid result type: %s', result_type)
+            raise ValueError('Invalid result type: {}'.format(result_type))
         self.result_type = result_type
         self.descriptor = descriptor
+
+
+class KeyConcurrencyError(Exception):
+    '''Error raised when a race condition arises when acccessing a key.'''
+    pass
 
 
 class StoreHandler(object):
@@ -72,14 +79,16 @@ class StoreHandler(object):
     K_DATA = 'data'
     K_RESULTS = 'results'
     K_COUNT = 'total'
-
+    K_STATS = 'stats'
+    K_STATS_STATUS = 'status'
+    # pylint: disable=not-an-iterable
     K_LISTS = {status: status.name.lower() for status in JobStatuses}
     '''Job lists.'''
-
 
     def __init__(self, **redis_config):
         '''Initialise the data store interface.'''
         self.logger = logging.getLogger(self.__class__.__name__)
+
         self._store = StrictRedis(**redis_config)
 
     def _make_key(self, *parts):
@@ -93,26 +102,31 @@ class StoreHandler(object):
         '''Build a redis key for a specific item status list.'''
         return self._make_key(key, self.K_LISTS[status])
 
+    def _make_stats_key(self, key, item_id):
+        '''Build a redis key for a specific item stats.'''
+        return self._make_key(key, self.K_STATS, item_id)
+
     def _add_item(self, key, item):
         '''Add an item to its queue list according to  its key type.
 
-        TODO (talk to Peter): Decide whether to use a MULTI/EXEC block. I don't think it is required
-        as the incr operation reserves an id, so it doesn't matter if the following operations are
-        done in the same transaction.
-        Use it for better performance: it should use a single packet.
+        The operations are not performed in a transaction because the initial `incr` is atomic and
+        reserves an id, after which the order of the following operations is not important nor
+        required to be atomic The only benefit of a transaction would be to improve performance,
+        however it would imply `watch`-ing the item_id operation and re-trying until everything is
+        atomic, which could actually result in a loss of performance.
         '''
         # Get new item id as incremental integer
         item_id = self._store.incr(self._make_key(key, self.K_COUNT))
-
         # Add pickled item to relevant list of items
         self._store.set(self._make_key(key, str(item_id)), dumps(item, byref=True))
-
-        if key == self.K_JOBS:
-            # Add job id to queued list of items
-            self._store.rpush(self._make_list_key(key, JobStatuses.QUEUED), item_id)
-
+        # Set jobs and results status in the stats
+        if key in (self.K_JOBS, self.K_RESULTS):
+            self._store.hset(self._make_stats_key(key, str(item_id)),
+                             self.K_STATS_STATUS, JobStatuses.QUEUED.value)
+            # For a job, also add it to the queued list
+            if key == self.K_JOBS:
+                self._store.rpush(self._make_list_key(key, JobStatuses.QUEUED), item_id)
         return item_id
-
 
     def _items_with_status(self, key, status):
         '''Returns the list of item ids currently in the queue, as integers.'''
@@ -122,6 +136,40 @@ class StoreHandler(object):
     def _get_item(self, key, item_id):
         '''Retrieve a specific item by its key type and id.'''
         return loads(self._store.get(self._make_key(key, str(item_id))))
+
+    def _get_item_status(self, key, item_id):
+        '''Retrieve the status of an item.'''
+        status = self._store.hget(self._make_stats_key(key, str(item_id)),
+                                  self.K_STATS_STATUS)
+        if not status:
+            raise ValueError('Unknown id: {}'.format(item_id))
+        return JobStatuses(int(status))
+
+    def _set_item_status(self, key, item_id, new_status):
+        '''Set the status of an item.'''
+        # pylint: disable=unsupported-membership-test
+        if new_status not in JobStatuses:
+            raise ValueError('Invalid status: {}'.format(new_status))
+        with self._store.pipeline() as pipe:
+            stats_key = self._make_stats_key(key, str(item_id))
+            try:
+                pipe.watch(stats_key)
+                old_status = self._store.hget(stats_key, self.K_STATS_STATUS)
+                if not old_status:
+                    raise ValueError('Unknown id: {}'.format(item_id))
+                old_status = JobStatuses(int(old_status))
+                pipe.multi()
+                # For a job, also move it between lists
+                if key == self.K_JOBS:
+                    # Remove from current status list
+                    pipe.lrem(self._make_list_key(self.K_JOBS, old_status), 0, item_id)
+                    # Add to new list
+                    pipe.rpush(self._make_list_key(self.K_JOBS, new_status), item_id)
+                # Set status in stats
+                pipe.hset(stats_key, self.K_STATS_STATUS, new_status.value)
+                pipe.execute()
+            except WatchError:
+                raise KeyConcurrencyError('Status key modified by third-party while I was editing it')
 
     def add_job(self, function_type, function, data, result_ids, ttl=-1, chunk=None):
         '''Add an new function and its data to the queue.
@@ -150,26 +198,6 @@ class StoreHandler(object):
             raise ValueError('Invalid result type ({}). It must be ResultMetadata or list thereof.'
                              .format(type(result)))
         return [self.add_result(item) for item in result]
-
-
-    def set_job_status(self, job_id, new_status):
-        '''Move a job status from QUEUED to any other status.'''
-        if new_status not in JobStatuses:
-            raise ValueError('Invalid job status: %s', new_status)
-        # Find job in all existing status lists
-        old_status = None
-        # Python2 Enums don't respect order, hence the following iteration may not be in optimal
-        # order. Python3 will iterate in the order of the JobStatuses elements.
-        for status in JobStatuses:
-            if job_id in self._items_with_status(self.K_JOBS, status):
-                old_status = status
-                break
-        if not old_status:
-            raise ValueError('Unknown job id: %s', job_id)
-        # Remove from current status list
-        self._store.lrem(self._make_list_key(self.K_JOBS, old_status), 0, job_id)
-        # Add to new list
-        self._store.rpush(self._make_list_key(self.K_JOBS, new_status), job_id)
 
     def queued_jobs(self):
         '''List queued jobs.'''
@@ -206,6 +234,22 @@ class StoreHandler(object):
     def get_result(self, result_id):
         '''Retrieve a specific result.'''
         return self._get_item(self.K_RESULTS, result_id)
+
+    def get_job_status(self, job_id):
+        '''Retrieve the status of a job.'''
+        return self._get_item_status(self.K_JOBS, job_id)
+
+    def set_job_status(self, job_id, status):
+        '''Changes the status of a job.'''
+        return self._set_item_status(self.K_JOBS, job_id, status)
+
+    def get_result_status(self, result_id):
+        '''Retrieve the status of a single result.'''
+        return self._get_item_status(self.K_RESULTS, result_id)
+
+    def set_result_status(self, result_id, status):
+        '''Changes the status of a single result.'''
+        return self._set_item_status(self.K_RESULTS, result_id, status)
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''
