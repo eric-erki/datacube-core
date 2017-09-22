@@ -341,12 +341,9 @@ class Results(object):
             results.red.delete() - delete result 'red' from storage (interim in S3 or ingested/indexed in ODC)
     """
 
-    _id = 0
-    _datasets = Dotify({})
-
     def __init__(self, result_info):
         self._result_info = result_info
-
+        self._datasets = Dotify({})
         # unpack result_info and popular internal variables
         self._id = self._result_info['id']
         for k, v in self._result_info['results'].items():
