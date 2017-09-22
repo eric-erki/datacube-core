@@ -132,6 +132,7 @@ def test_add_job(store_handler, user_data):
     store_handler._store.flushdb()
     job_ids_orig = []
     descriptors = []
+    expected = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
             results = []
@@ -139,10 +140,16 @@ def test_add_job(store_handler, user_data):
                 results.append(ResultMetadata(result['result_type'], result['descriptor']))
                 descriptors.append(result['descriptor'])
             result_ids = store_handler.add_result(results)
-            job_ids_orig.append(store_handler.add_job(job['job_type'],
-                                                      job['function'],
-                                                      job['data'],
-                                                      result_ids))
+            job_id = store_handler.add_job(job['job_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_ids)
+            job_ids_orig.append(job_id)
+            expected[job_id] = {
+                'function': job['function'](),
+                'function_type': job['job_type'],
+                'data': job['data']
+            }
 
     # List all keys in the store
     num_jobs = len(job_ids_orig)
@@ -159,7 +166,7 @@ def test_add_job(store_handler, user_data):
 
     # List all queued jobs
     job_ids = store_handler.queued_jobs()
-    assert job_ids == list(range(1, num_jobs + 1))
+    assert sorted(job_ids) == sorted(job_ids_orig)
 
     # Retrieve all job functions and data
     FUNCTION_TYPES = list(FunctionTypes)
@@ -175,9 +182,9 @@ def test_add_job(store_handler, user_data):
         print('Job #{:03d} has function #{:03d} ({:7}): "{}" and data #{:03d}: "{}"'.format(
             job_id, function_id, function.function_type.name,
             function.function(), data_id, data))
-        assert function.function() == 'User {:03d}, job {:03d}'.format(expected_user, expected_job)
-        assert function.function_type == FUNCTION_TYPES[(job_id - 1) % 3]
-        assert data == 'Data for {:03d}-{:03d}'.format(expected_user, expected_job)
+        assert function.function() == expected[job_id]['function']
+        assert function.function_type == expected[job_id]['function_type']
+        assert data == expected[job_id]['data']
 
 
 def test_get_job_status(store_handler, user_data):
