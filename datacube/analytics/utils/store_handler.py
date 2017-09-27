@@ -47,10 +47,10 @@ class FunctionMetadata(object):
 
 class JobMetadata(object):
     '''Job metadata.'''
-    def __init__(self, function_id, data_id, result_ids, ttl, chunk, timestamp):
+    def __init__(self, function_id, data_id, result_id, ttl, chunk, timestamp):
         self.function_id = function_id
         self.data_id = data_id
-        self.result_ids = result_ids
+        self.result_id = result_id
         self.ttl = ttl
         self.chunk = chunk
         self.timestamp = timestamp
@@ -79,6 +79,7 @@ class StoreHandler(object):
     K_DATA = 'data'
     K_RESULTS = 'results'
     K_COUNT = 'total'
+    K_DEPENDENCIES = 'dependencies'
     K_STATS = 'stats'
     K_STATS_STATUS = 'status'
     # pylint: disable=not-an-iterable
@@ -171,7 +172,7 @@ class StoreHandler(object):
             except WatchError:
                 raise KeyConcurrencyError('Status key modified by third-party while I was editing it')
 
-    def add_job(self, function_type, function, data, result_ids, ttl=-1, chunk=None):
+    def add_job(self, function_type, function, data, result_id, ttl=-1, chunk=None):
         '''Add an new function and its data to the queue.
 
         Both get serialised for storage. `data` is optional in case a job doesn't have any explicit
@@ -183,21 +184,29 @@ class StoreHandler(object):
         function_id = self._add_item(self.K_FUNCTIONS, func)
         data_id = self._add_item(self.K_DATA, data) if data else -1
         timestamp = None  # TODO: do we use redis or worker time?
-        job = JobMetadata(function_id, data_id, result_ids, ttl, chunk, timestamp)
+        job = JobMetadata(function_id, data_id, result_id, ttl, chunk, timestamp)
         return self._add_item(self.K_JOBS, job)
 
     def add_result(self, result):
-        '''Add a (list of) result(s) to the store.
+        '''Add a result or list or result ids to the store.
 
         Returns:
-          The result id (or the list of result ids).
+          The result id.
         '''
-        if isinstance(result, ResultMetadata):
-            return self._add_item(self.K_RESULTS, result)
-        if not isinstance(result, (list, tuple)):
-            raise ValueError('Invalid result type ({}). It must be ResultMetadata or list thereof.'
+        if not isinstance(result, (ResultMetadata, list, tuple)):
+            raise ValueError('Invalid result type ({}). It must be ResultMetadata or list of IDs.'
                              .format(type(result)))
-        return [self.add_result(item) for item in result]
+        return self._add_item(self.K_RESULTS, result)
+
+    def add_job_dependencies(self, job_id, dependent_job_ids=None, dependent_result_ids=None):
+        '''Add a job dependencies, a pickled tuple of a list of jobs ids and a list of result ids.
+
+        Any existing valued get overwritten.
+        '''
+        # Add pickled item to relevant list of items
+        self._store.set(self._make_key(self.K_JOBS, self.K_DEPENDENCIES, str(job_id)),
+                        dumps((dependent_job_ids or None, dependent_result_ids or None),
+                              byref=True))
 
     def queued_jobs(self):
         '''List queued jobs.'''
@@ -243,6 +252,11 @@ class StoreHandler(object):
         '''Changes the status of a job.'''
         return self._set_item_status(self.K_JOBS, job_id, status)
 
+    def get_job_dependencies(self, job_id):
+        '''Retrieve job dependencies, a tuple of a list of jobs ids and a list of result ids.'''
+        (jobs, results) = self._get_item(self._make_key(self.K_JOBS, self.K_DEPENDENCIES), job_id)
+        return (jobs or [], results or [])
+
     def get_result_status(self, result_id):
         '''Retrieve the status of a single result.'''
         return self._get_item_status(self.K_RESULTS, result_id)
@@ -255,3 +269,40 @@ class StoreHandler(object):
         '''Returns information about the store. For now, all its keys.'''
         return 'Store keys: {}'.format(
             sorted([key.decode('utf-8') for key in self._store.keys()]))
+
+    def _decode_string(self, key, value):
+        '''Helper function for str_dump. Do not call directly.'''
+        try:
+            value = value.decode('utf-8')
+        except ValueError:
+            value = loads(value)
+            if isinstance(value, (ResultMetadata, JobMetadata, FunctionMetadata)):
+                value = '{}: {{{}}}'.format(
+                    type(value).__name__,
+                    ','.join(['{}: {}'.format(k, v.__name__ if callable(v) else v)
+                              for k, v in value.__dict__.items()]))
+        return '{}: {}'.format(key.decode('utf-8'), value)
+
+    def _decode_list(self, key, value):
+        '''Helper function for str_dump. Do not call directly.'''
+        return '{}: [{}]'.format(key.decode('utf-8'),
+                                 ', '.join([val.decode('utf-8') for val in value]))
+
+    def str_dump(self):
+        '''Return a simple string dump of the store, for debugging only.'''
+        output = []
+        for key in sorted(self._store.keys()):
+            val_type = self._store.type(key)
+            if val_type == b'string':
+                output.append(self._decode_string(key, self._store.get(key)))
+            elif val_type == b'hash':
+                output.append('{}:'.format(key.decode('utf-8')))
+                for skey in self._store.hkeys(key):
+                    output.append(' - {}'.format(self._decode_string(
+                        skey,
+                        self._store.hget(key, skey))))
+            elif val_type == b'list':
+                output.append(self._decode_list(key, self._store.lrange(key, 0, -1)))
+            else:
+                output.append('{}: <{}>'.format(key, self._store.type(key)))
+        return '\n'.join(output)

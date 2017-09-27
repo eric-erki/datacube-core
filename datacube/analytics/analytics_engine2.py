@@ -10,6 +10,7 @@ import time
 from threading import Thread
 from uuid import uuid4
 import numpy as np
+from pprint import pformat
 
 from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
 from datacube.analytics.job_result import JobResult, LoadType
@@ -56,12 +57,13 @@ class AnalyticsEngineV2(object):
             self.logger.debug('Job {:03d} is now {}'
                               .format(job_id, ae.store.get_job_status(job_id).name))
 
-            for result_id in job['result_ids']:
+            for result_descriptor in job['result_descriptors'].values():
+                result_id = result_descriptor['id']
                 ae.store.set_result_status(result_id, JobStatuses.RUNNING)
                 self.logger.debug('Result {:03d}-{:03d} is now {}'
                                   .format(job_id, result_id,
                                           ae.store.get_result_status(result_id).name))
-                # TODO: Put this back in. For now it crashes in tests because of AWS credentials
+                # TODO: Uncomment and test with AWS credentials:
                 # ae._save_results()
                 ae.store.set_result_status(result_id, JobStatuses.COMPLETED)
                 self.logger.debug('Result {:03d}-{:03d} is now {}'
@@ -69,12 +71,13 @@ class AnalyticsEngineV2(object):
                                           ae.store.get_result_status(result_id).name))
 
         function_type = self._determine_function_type(func)
-        decomposed = self._decomposition(function_type, func, data, ttl=1, chunk=None)
-        jros = []
+        decomposed = self._decompose(function_type, func, data, ttl=1, chunk=None)
+        self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
+
         for job in decomposed['jobs']:
             Thread(target=fake_worker_thread, args=(self, job)).start()
-            jros.append(self._create_jro(job))
-        return jros
+
+        return self._create_jro(decomposed['base'])
 
     def _determine_function_type(self, func):
         '''Determine the type of a function.'''
@@ -82,59 +85,98 @@ class AnalyticsEngineV2(object):
         # code)
         return FunctionTypes.PICKLED
 
-    def _decomposition(self, function_type, function, data, ttl=1, chunk=None):
-        '''Decompose the function and data into jobs and results.
+    def _decompose(self, function_type, function, data, ttl=1, chunk=None):
+        '''Decompose the function and data.
 
-        The decomposition of function over data create one or more jobs. Each job has its own
-        decomposed function (it may be the same as the original function for now) and will create
-        one or more results.
+        The decomposition of function over data creates one or more jobs. Each job has its own
+        decomposed function, and will create one or more results. This function returns a dictionary
+        describing the base job and the list of decomposed jobs, each with their store ids as
+        required.
         '''
         # == Mock implementation ==
-        decomposed = {}
-        decomposed['base'] = {}
-        decomposed['base']['function_type'] = function_type
-        decomposed['base']['function'] = function
-        decomposed['base']['data'] = data
-        decomposed['base']['ttl'] = ttl
-        decomposed['base']['chunk'] = chunk
-        decomposed['jobs'] = []
+        # Prepare the sub-jobs and base job info
+        jobs = self._create_jobs(function, data)
+        base = self._create_base_job(function_type, function, data, ttl, chunk, jobs)
+        return {
+            'base': base,
+            'jobs': jobs
+        }
 
-        # Assuming actual task decomposition, we fake 2 jobs would be created from the original
-        # function below (outside for loop)
-        for job_no in range(2):
-            decomposed_function_type = FunctionTypes.PICKLED
-            def decomposed_function(job_no=job_no):
-                return 'Function of job {:03d}'.format(job_no)
+    def _store_job(self, job, dependent_job_ids=None, dependent_result_ids=None):
+        '''Store a job, its data, results and dependencies in the store.
 
-            decomposed_data = 'Data of job {:03d}'.format(job_no)
+        The job metadata passed as first parameter is updated in place, basically adding all item
+        ids in the store.
+        '''
+        for field in ('function_type', 'function', 'data', 'result_descriptors'):
+            if field not in job:
+                raise ValueError('Missing "{}" in job description'.format(field))
+        result_ids = []
+        for descriptor in job['result_descriptors'].values():
+            result_metadata = ResultMetadata(ResultTypes.S3IO, descriptor)
+            result_id = self.store.add_result(result_metadata)
+            # Assign id to result descriptor dict (in place)
+            descriptor['id'] = result_id
+            result_ids.append(result_id)
+        result_id = self.store.add_result(result_ids)
+        job_id = self.store.add_job(job['function_type'],
+                                    job['function'],
+                                    job['data'],
+                                    result_id)
+        # Add dependencies
+        self.store.add_job_dependencies(job_id, dependent_job_ids, dependent_result_ids)
+        job.update({
+            'id': job_id,
+            'result_id': result_id,
+        })
 
-            results = []
-            # If each job can be parallelised (or produce several sequential results?), then how
-            # many results is each job going to produce. They will all share the same function and
-            # data. For different function or data, create new jobs instead.
-            # Here we allow: 1 job <=> 1 data <=> 1+ result
-            for result_no in range(2):
-                result_descriptor = 'Result {:03d} of job {:03d}'.format(result_no, job_no)
-                results.append(ResultMetadata(ResultTypes.S3IO, result_descriptor))
-            # Add (empty) results to store, mark as queued
-            decomposed_result_ids = self.store.add_result(results)
+    def _create_base_job(self, function_type, function, data, ttl, chunk, dependent_jobs):
+        '''Prepare the base job.'''
+        descriptors = self._create_result_descriptors(data['measurements'])
+        job = {
+            'function_type': function_type,
+            'function': function,
+            'data': data,
+            'ttl': ttl,
+            'chunk': chunk,
+            'result_descriptors': descriptors
+        }
+        dependent_job_ids = [dep_job['id'] for dep_job in dependent_jobs]
+        # Store and modify job in place to add store ids
+        self._store_job(job, dependent_job_ids)
+        return job
 
-            # Add job to store, mark as queued
-            job_id = self.store.add_job(decomposed_function_type,
-                                        decomposed_function,
-                                        decomposed_data,
-                                        decomposed_result_ids)
-            # All that is needed for workers to do the job TODO: Discuss how workers will know that
-            # a job+data should lead to more than 1 result id. Potentially, fix results to a single
-            # result at this level, i.e. 1 job <=> 1 data <=> 1 result
-            decomposed['jobs'].append({
-                'id': job_id,
-                'function_type': decomposed_function_type,
-                'function': decomposed_function,
-                'data': decomposed_data,
-                'result_ids': decomposed_result_ids
-            })
-        return decomposed
+    def _create_jobs(self, function, data):
+        '''Decompose data and function into a list of jobs.'''
+        job_data = self._decompose_data(data)
+        jobs = self._decompose_function(function, job_data)
+        for job in jobs:
+            # Store and modify job in place to add store ids
+            self._store_job(job)
+        return jobs
+
+    def _decompose_data(self, data):
+        '''Decompose data into a list of chunks.'''
+        # == Mock implementation ==
+        from copy import deepcopy
+        decomposed_data = deepcopy(data)
+        decomposed_data.update({
+            'slice': (2, 200, 200)
+        })
+        return decomposed_data
+
+    def _decompose_function(self, function, data):
+        '''Decompose a function and data into a list of jobs.'''
+        # == Mock implementation ==
+        def decomposed_function(data):
+            return data
+        return [{
+            'function_type': FunctionTypes.PICKLED,
+            'function': decomposed_function,
+            'data': data,
+            'result_descriptors': self._create_result_descriptors(data['measurements'])
+        }]
+
 
     def _save_results(self):
         s3lio = S3LIO(True, True, None, 30)
@@ -144,14 +186,12 @@ class AnalyticsEngineV2(object):
         s3lio.put_array_in_s3(red, (2, 2, 2), "jro_test_red", 'eetest')
         s3lio.put_array_in_s3(blue, (2, 2, 2), "jro_test_blue", 'eetest')
 
-    def _create_result_descriptor(self, result_ids):
+    def _create_result_descriptors(self, bands):
+        '''Create mock result descriptors.'''
         # == Mock implementation ==
-        bands = ('blue', 'red', 'green')
         descriptors = {}
-        for result_no, result_id in enumerate(result_ids):
-            band = bands[result_no % len(bands)]
+        for band in bands:
             descriptors[band] = {
-                'id': result_id,
                 'type': ResultTypes.S3IO,
                 'load_type': LoadType.EAGER,
                 'base_name': 'jro_test_{}'.format(band),
@@ -160,14 +200,15 @@ class AnalyticsEngineV2(object):
                 'chunk': (2, 2, 2),
                 'dtype': np.uint8
             }
-        return {
-            # TODO: there is no store id associated with the "list" of results, only one id per
-            # actual result. For now I add a uuid, but I am not sure whether we need any id at all
-            'id': uuid4(),
-            'results': descriptors
-        }
+        return descriptors
 
     def _create_jro(self, job):
-        job_descriptor = {'id': job['id']}
-        results_descriptor = self._create_result_descriptor(job['result_ids'])
-        return JobResult(job_descriptor, results_descriptor)
+        '''Create the job result object for a base job.'''
+        job_descriptor = {
+            'id': job['id']
+            }
+        result_descriptor = {
+            'id': job['result_id'],
+            'results': job['result_descriptors']
+        }
+        return JobResult(job_descriptor, result_descriptor)

@@ -101,20 +101,33 @@ def user_data():
 
 
 def test_submit_job(store_handler, redis_config):
-    '''Test the submission of a job.'''
+    '''Test the submission of a job.
+
+    This test function needs further work to test the JRO and corresponding store values.
+    '''
     store_handler._store.flushdb()
 
-    def function():
-        return 'Simple function'
-    data = {'data': 'Simple data'}
+    def base_function(data):
+        return data
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.25, 149.35),
+        'y': (-35.25, -35.35)
+    }
     engine = AnalyticsEngineV2(redis_config)
-    jros = engine.submit_python_function(function, data)
-    # Assuming elements are created in deterministic order
-    assert jros[0].job.id == 1
-    assert jros[0].results.datasets['blue'].to_dict()['id'] == 1
-    assert jros[0].results.datasets['blue'].to_dict()['base_name'] == 'jro_test_blue'
+    jro = engine.submit_python_function(base_function, data)
 
-    # Leave time to fake workers to complete their tasks
+    print('JRO\n{}'.format(jro))
+    print('Store dump\n{}'.format(engine.store.str_dump()))
+
+    # Ensure an id is set for the job and one of its datasets
+    assert isinstance(jro.job.id, int)
+    assert isinstance(jro.results.datasets['blue'].to_dict()['id'], int)
+    # Check the dataset base name
+    assert jro.results.datasets['blue'].to_dict()['base_name'] == 'jro_test_blue'
+
+    # Leave time to fake workers to complete their tasks then flush the store
     from time import sleep
     sleep(0.4)
     store_handler._store.flushdb()

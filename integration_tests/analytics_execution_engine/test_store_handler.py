@@ -99,7 +99,7 @@ def user_data():
             def function(user_no=user_no, job_no=job_no):
                 return 'User {:03d}, job {:03d}'.format(user_no, job_no)
             jobs.append({
-                'job_type': FUNCTION_TYPES[job_no % 3],
+                'function_type': FUNCTION_TYPES[job_no % 3],
                 'function': function,
                 'data': 'Data for {:03d}-{:03d}'.format(user_no, job_no),
                 'results': [{
@@ -130,80 +130,97 @@ def test_add_job_invalid(store_handler):
 def test_add_job(store_handler, user_data):
     '''Test the addition and retrieval of jobs.'''
     store_handler._store.flushdb()
-    job_ids_orig = []
-    descriptors = []
-    expected = {}
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            job_id = store_handler.add_job(job['job_type'],
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
                                            job['function'],
                                            job['data'],
-                                           result_ids)
-            job_ids_orig.append(job_id)
-            expected[job_id] = {
-                'function': job['function'](),
-                'function_type': job['job_type'],
-                'data': job['data']
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
             }
 
     # List all keys in the store
-    num_jobs = len(job_ids_orig)
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    job_count = len(expected_jobs)
+    result_count = len(expected_results)
     expected_keys = sorted(
-        [u'functions:{}'.format(i) for i in range(1, num_jobs + 1)] +
-        [u'data:{}'.format(i) for i in range(1, num_jobs + 1)] +
-        [u'jobs:{}'.format(i) for i in range(1, num_jobs + 1)] +
-        [u'jobs:stats:{}'.format(i) for i in range(1, num_jobs + 1)] +
-        [u'results:{}'.format(i) for i in range(1, len(descriptors) + 1)] +
-        [u'results:stats:{}'.format(i) for i in range(1, len(descriptors) + 1)] +
+        [u'functions:{}'.format(i+1) for i in range(job_count)] +
+        [u'data:{}'.format(i+1) for i in range(job_count)] +
+        [u'jobs:{}'.format(i+1) for i in range(job_count)] +
+        [u'jobs:stats:{}'.format(i+1) for i in range(job_count)] +
+        [u'results:{}'.format(i+1) for i in range(result_count)] +
+        [u'results:stats:{}'.format(i+1) for i in range(result_count)] +
         [u'functions:total', u'data:total', u'jobs:total', u'jobs:queued', u'results:total']
     )
     assert str(store_handler) == 'Store keys: {}'.format(expected_keys)
 
     # List all queued jobs
     job_ids = store_handler.queued_jobs()
-    assert sorted(job_ids) == sorted(job_ids_orig)
+    assert sorted(job_ids) == sorted(expected_jobs.keys())
 
     # Retrieve all job functions and data
-    FUNCTION_TYPES = list(FunctionTypes)
     for job_id in job_ids:
-        job = store_handler.get_job(job_id)
-        function_id = job.function_id
-        function = store_handler.get_function(function_id)
-        data_id = job.data_id
-        data = store_handler.get_data(data_id)
+        expected_job = expected_jobs[job_id]
 
-        expected_user = int((job_id - 1) / 6)
-        expected_job = (job_id - 1) % 6
-        print('Job #{:03d} has function #{:03d} ({:7}): "{}" and data #{:03d}: "{}"'.format(
-            job_id, function_id, function.function_type.name,
-            function.function(), data_id, data))
-        assert function.function() == expected[job_id]['function']
-        assert function.function_type == expected[job_id]['function_type']
-        assert data == expected[job_id]['data']
+        job = store_handler.get_job(job_id)
+        function_meta = store_handler.get_function(job.function_id)
+        assert function_meta.function_type == expected_job['function_type']
+        assert function_meta.function() == expected_job['function']()
+
+        data = store_handler.get_data(job.data_id)
+        assert data == expected_job['data']
 
 
 def test_get_job_status(store_handler, user_data):
     '''Test get job status.'''
     store_handler._store.flushdb()
-    job_ids_orig = []
-    descriptors = []
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            job_ids_orig.append(store_handler.add_job(job['job_type'],
-                                                      job['function'],
-                                                      job['data'],
-                                                      result_ids))
-    for job_id in job_ids_orig:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    for job_id in expected_jobs.keys():
         assert store_handler.get_job_status(job_id) == JobStatuses.QUEUED
 
     # Check invalid inputs raise an error
@@ -216,39 +233,56 @@ def test_get_job_status(store_handler, user_data):
 def test_set_job_status(store_handler, user_data):
     '''Test the modification of job status (moving from list to list) in the store.'''
     store_handler._store.flushdb()
-    job_ids_orig = []
-    descriptors = []
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            job_ids_orig.append(store_handler.add_job(job['job_type'],
-                                                      job['function'],
-                                                      job['data'],
-                                                      result_ids))
-    store_handler.set_job_status(3, JobStatuses.RUNNING)
-    assert store_handler.running_jobs() == [3]
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
 
-    store_handler.set_job_status(3, JobStatuses.COMPLETED)
-    store_handler.set_job_status(4, JobStatuses.COMPLETED)
-    assert store_handler.completed_jobs() == [3, 4]
+    # We test using 4 random `expected_jobs` ids
+    assert len(expected_jobs) > 3, 'Not enough jobs to assess, please check test'
+    jids = list(expected_jobs.keys())[:4]
+    store_handler.set_job_status(jids[0], JobStatuses.RUNNING)
+    assert store_handler.running_jobs() == [jids[0]]
 
-    store_handler.set_job_status(5, JobStatuses.CANCELLED)
-    assert store_handler.cancelled_jobs() == [5]
+    store_handler.set_job_status(jids[0], JobStatuses.COMPLETED)
+    store_handler.set_job_status(jids[1], JobStatuses.COMPLETED)
+    assert store_handler.completed_jobs() == [jids[0], jids[1]]
 
-    store_handler.set_job_status(3, JobStatuses.ERRORED)
-    store_handler.set_job_status(6, JobStatuses.ERRORED)
-    assert store_handler.errored_jobs() == [3, 6]
+    store_handler.set_job_status(jids[2], JobStatuses.CANCELLED)
+    assert store_handler.cancelled_jobs() == [jids[2]]
+
+    store_handler.set_job_status(jids[0], JobStatuses.ERRORED)
+    store_handler.set_job_status(jids[3], JobStatuses.ERRORED)
+    assert store_handler.errored_jobs() == [jids[0], jids[3]]
 
     # print('\nAll lists after status change:\n{}'.format(get_all_lists(store_handler)))
-    assert store_handler.queued_jobs() == list(range(1, 3)) + list(range(7, 13))
+    assert store_handler.queued_jobs() == list(set(expected_jobs.keys()) - set(jids))
     assert store_handler.running_jobs() == []
-    assert store_handler.completed_jobs() == [4]
-    assert store_handler.cancelled_jobs() == [5]
-    assert store_handler.errored_jobs() == [3, 6]
+    assert store_handler.completed_jobs() == [jids[1]]
+    assert store_handler.cancelled_jobs() == [jids[2]]
+    assert store_handler.errored_jobs() == [jids[0], jids[3]]
 
     # Invalid job id: not in store
     with pytest.raises(ValueError):
@@ -267,39 +301,65 @@ def test_set_job_status(store_handler, user_data):
 def test_add_result(store_handler, user_data):
     '''Test the addition and retrieval results attached to jobs.'''
     store_handler._store.flushdb()
-    job_ids = []
-    descriptors = []
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            job_ids.append(store_handler.add_job(job['job_type'],
-                                                 job['function'],
-                                                 job['data'],
-                                                 result_ids))
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
 
     # Validate retrieval straight from result objects
-    checked = 0
-    for desc_id, descriptor in enumerate(descriptors):
-        result = store_handler.get_result(desc_id+1)
-        assert result.descriptor == descriptor
-        checked += 1
-    assert checked > 0, 'No descriptors to assess, please check test'
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    assert len(expected_results) > 0, 'No results to assess, please check test'
+    for result_id, result_metadata in expected_results.items():
+        result = store_handler.get_result(result_id)
+        if isinstance(result, ResultMetadata):
+            assert result.descriptor == result_metadata.descriptor
+            assert result.result_type == result_metadata.result_type
+        else:
+            assert isinstance(result, list)
+            assert sorted(result) == sorted(result_metadata)
 
     # Validate retrieval through jobs
-    checked = 0
+    job_ids = store_handler.queued_jobs()
+    assert sorted(job_ids) == sorted(expected_jobs.keys())
     for job_id in job_ids:
+        expected_job = expected_jobs[job_id]
+        expected_result_ids = expected_results[expected_job['result_id']]
+        # List of results
         job = store_handler.get_job(job_id)
-        data = store_handler.get_data(job.data_id)
-        for res, result_id in enumerate(job.result_ids):
+        result_ids = store_handler.get_result(job.result_id)
+        assert isinstance(result_ids, list)
+        assert isinstance(expected_result_ids, list)
+        assert sorted(result_ids) == sorted(expected_result_ids)
+
+        for result_id in result_ids:
+            result_metadata = expected_results[result_id]
             result = store_handler.get_result(result_id)
-            assert result.result_type == RESULT_TYPES[res % 3]
-            assert result.descriptor == '{}-{:03d}'.format(data.replace('Data', 'Descriptor'), res)
-        checked += 1
-    assert checked > 0, 'No results to assess, please check test'
+            assert isinstance(result, ResultMetadata)
+            assert isinstance(result_metadata, ResultMetadata)
+            assert result.descriptor == result_metadata.descriptor
+            assert result.result_type == result_metadata.result_type
 
 
 def test_add_result_invalid(store_handler):
@@ -318,22 +378,35 @@ def test_add_result_invalid(store_handler):
 def test_get_result_status(store_handler, user_data):
     '''Test get result status.'''
     store_handler._store.flushdb()
-    job_ids_orig = []
-    result_ids_orig = []
-    descriptors = []
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            result_ids_orig += result_ids
-            job_ids_orig.append(store_handler.add_job(job['job_type'],
-                                                      job['function'],
-                                                      job['data'],
-                                                      result_ids))
-    for result_id in result_ids_orig:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_results) > 0, 'No results to assess, please check test'
+    for result_id in expected_results.keys():
         assert store_handler.get_result_status(result_id) == JobStatuses.QUEUED
 
     # Check invalid inputs raise an error
@@ -346,20 +419,35 @@ def test_get_result_status(store_handler, user_data):
 def test_set_result_status(store_handler, user_data):
     '''Test the modification of result status in the store.'''
     store_handler._store.flushdb()
-    job_ids_orig = []
-    descriptors = []
+    expected_jobs = {}
+    expected_results = {}
     for user_no, jobs in user_data.items():
         for job in jobs:
-            results = []
+            result_ids = []
             for result in job['results']:
-                results.append(ResultMetadata(result['result_type'], result['descriptor']))
-                descriptors.append(result['descriptor'])
-            result_ids = store_handler.add_result(results)
-            job_ids_orig.append(store_handler.add_job(job['job_type'],
-                                                      job['function'],
-                                                      job['data'],
-                                                      result_ids))
-    result_id = 3  # Random existing result ID
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_results) > 0, 'No results to assess, please check test'
+    result_id = list(expected_results.keys())[0]  # Randomly pick first result ID
     for status in JobStatuses:
         store_handler.set_result_status(result_id, JobStatuses.RUNNING)
         store_handler.get_result_status(result_id) == status
