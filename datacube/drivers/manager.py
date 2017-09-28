@@ -33,7 +33,7 @@ class DriverManager(object):
     #: Attribue name where driver information is stored in `__init__.py`.
     _DRIVER_SPEC = 'DRIVER_SPEC'
 
-    def __init__(self, index=None, *index_args, **index_kargs):
+    def __init__(self, index=None, default_driver_name=None, *index_args, **index_kargs):
         """Initialise the manager.
 
         Each driver get initialised during instantiation, including
@@ -75,7 +75,7 @@ class DriverManager(object):
         # pylint: disable=protected-access
         self.set_index(index, *index_args, **index_kargs)
         self.reload_drivers(index, *index_args, **index_kargs)
-        self.set_current_driver(DriverManager._DEFAULT_DRIVER)
+        self.set_current_driver(default_driver_name or self._DEFAULT_DRIVER)
         self.logger.debug('Ready. %s', self)
 
     def __getstate__(self):
@@ -169,9 +169,13 @@ class DriverManager(object):
                 driver_cls = getattr(driver_module, spec[1])
                 if issubclass(driver_cls, Driver):
                     driver = driver_cls(weakref.ref(self)(), spec[0], index, *index_args, **index_kargs)
-                    if not driver.requirements_satisfied():
+
+                    validate_connection = index_kargs['validate_connection'] \
+                        if 'validate_connection' in index_kargs else True
+                    if validate_connection and not driver.requirements_satisfied():
                         self.logger.info('Driver plugin "%s" failed requirements check, skipping.', spec[1])
                         continue
+
                     self.__drivers[driver.name] = driver
                 else:
                     self.logger.info('Driver plugin "%s" is not a subclass of the abstract Driver class.',

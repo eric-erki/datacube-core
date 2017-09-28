@@ -8,6 +8,7 @@ import warnings
 from collections import namedtuple, OrderedDict
 from itertools import groupby, repeat
 from math import ceil
+from pathlib import PurePath
 
 import numpy
 import pandas
@@ -69,7 +70,13 @@ class Datacube(object):
     :type index: datacube.index._api.Index
     """
 
-    def __init__(self, index=None, config=None, app=None, driver_manager=None):
+    def __init__(self,
+                 index=None,
+                 config=None,
+                 app=None,
+                 env=None,
+                 driver_manager=None,
+                 validate_connection=None):
         """
         Create the interface for the query and storage access.
 
@@ -81,13 +88,20 @@ class Datacube(object):
           driver manager for testing purposes.
         :type index: :py:class:`datacube.index._api.Index` or None.
 
-        :param LocalConfig config: A config object or a path to a config file that defines the connection.
+        :param Union[LocalConfig|str] config: A config object or a path to a config file that defines the connection.
 
             If an index is supplied, config is ignored.
         :param str app: A short, alphanumeric name to identify this application.
 
             The application name is used to track down problems with database queries, so it is strongly
             advised that be used.  Required if an index is not supplied, otherwise ignored.
+
+        :param str env: Name of the datacube environment to use.
+            ie. the section name in any config files. Defaults to 'datacube' for backwards
+            compatibility with old config files.
+
+            Allows you to have multiple datacube instances in one configuration, specified on load,
+            eg. 'dev', 'test' or 'landsat', 'modis' etc.
 
         :param DriverManager driver_manager: The driver manager to
           use. If not specified, an new manager will be created using
@@ -98,19 +112,21 @@ class Datacube(object):
 
         """
         self._to_close = None
-        if index:
-            self.driver_manager = DriverManager(index=index)
-            self._to_close = self.driver_manager
-        elif driver_manager:
-            self.driver_manager = driver_manager
-        else:
-            if config is not None:
-                if isinstance(config, string_types):
-                    config = LocalConfig.find([config])
-                self.driver_manager = DriverManager(local_config=config, application_name=app)
-            else:
-                self.driver_manager = DriverManager(application_name=app)
-            self._to_close = self.driver_manager
+
+        if not driver_manager:
+            if not config:
+                config = LocalConfig.find(env=env)
+            # The 'config' parameter could be a string path
+            elif isinstance(config, (string_types, PurePath)):
+                config = LocalConfig.find(paths=[config], env=env)
+
+            driver_manager = DriverManager(index=index,
+                                           local_config=config,
+                                           application_name=app,
+                                           validate_connection=validate_connection)
+            self._to_close = driver_manager
+
+        self.driver_manager = driver_manager
         self.index = self.driver_manager.index
 
     def __del__(self):

@@ -9,6 +9,7 @@ dependencies:
 - python-dateutil
 - jsonschema
 - cachetools
+- cloudpickle >= 0.4.0 # pickle logger objects
 - coveralls
 - numpy
 - numexpr # For AE/EE
@@ -16,7 +17,8 @@ dependencies:
 - singledispatch
 - netcdf4
 - psycopg2
-- gdal
+- gdal = 2.1.*        # [py27]
+- gdal                # [not py27]
 - dask
 - xarray
 - redis-py # redis client lib, used by celery
@@ -46,3 +48,6 @@ dependencies:
   - pytest-faulthandler
   - SharedArray
   - yamllint # testing
+
+# [py27] is a preprocessing-selector
+# https://conda.io/docs/user-guide/tasks/build-packages/define-metadata.html#preprocessing-selectors

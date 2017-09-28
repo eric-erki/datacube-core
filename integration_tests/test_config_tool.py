@@ -13,6 +13,8 @@ import pytest
 from click.testing import CliRunner
 
 import datacube.scripts.cli_app
+from datacube import Datacube
+from datacube.config import LocalConfig
 from datacube.index.postgres import _dynamic
 from datacube.index.postgres.tables._core import drop_db, has_schema, SCHEMA_NAME
 
@@ -227,6 +229,51 @@ def example_user(global_integration_cli_args, db, request):
         users = (user_name for role_name, user_name, desc in connection.list_users())
         if username in users:
             connection.drop_users([username])
+
+
+def test_multiple_environment_config(tmpdir):
+    config_path = tmpdir.join('second.conf')
+
+    config_path.write("""
+[user]
+default_environment: test_default
+
+[test_default]
+db_hostname: db.opendatacube.test
+
+[test_alt]
+db_hostname: alt-db.opendatacube.test
+    """)
+
+    config_path = str(config_path)
+
+    config = LocalConfig.find([config_path])
+    assert config.db_hostname == 'db.opendatacube.test'
+    alt_config = LocalConfig.find([config_path], env='test_alt')
+    assert alt_config.db_hostname == 'alt-db.opendatacube.test'
+
+    # Lazily connect: they shouldn't try to connect during this test as we're not using the API
+    args = dict(validate_connection=False)
+
+    # Make sure the correct config is passed through the API
+    # Parsed config:
+    db_url = 'postgresql://{user}@db.opendatacube.test:5432/datacube'.format(user=config.db_username)
+    alt_db_url = 'postgresql://{user}@alt-db.opendatacube.test:5432/datacube'.format(user=config.db_username)
+
+    with Datacube(config=config, **args) as dc:
+        assert str(dc.index.url) == db_url
+
+    # When none specified, default environment is loaded
+    with Datacube(config=str(config_path), **args) as dc:
+        assert str(dc.index.url) == db_url
+    # When specific environment is loaded
+    with Datacube(config=config_path, env='test_alt', **args) as dc:
+        assert str(dc.index.url) == alt_db_url
+
+    # An environment that isn't in any config files
+    with pytest.raises(ValueError):
+        with Datacube(config=config_path, env='undefined-env', **args) as dc:
+            pass
 
 
 def test_user_creation(global_integration_cli_args, example_user):
