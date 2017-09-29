@@ -91,16 +91,20 @@ def band_info(band_names):
     }
 
 
-def time_info(time):
+def time_info(time, start_time=None, end_time=None, key_time=None):
     time_str = to_datetime(time).isoformat()
-    return {
+    start_time_str = to_datetime(start_time).isoformat() if start_time else time_str
+    end_time_str = to_datetime(end_time).isoformat() if end_time else time_str
+    extent = {
         'extent': {
-            'from_dt': time_str,
-            'to_dt': time_str,
+            'from_dt': start_time_str,
+            'to_dt': end_time_str,
             'center_dt': time_str,
-
         }
     }
+    if key_time is not None:
+        extent['extent']['key_time'] = key_time
+    return extent
 
 
 def source_info(source_datasets):
@@ -166,7 +170,8 @@ def xr_apply(data_array, func, dtype):
     return xarray.DataArray(data, coords=data_array.coords, dims=data_array.dims)
 
 
-def make_dataset(product, sources, extent, center_time, valid_data=None, uri=None, app_info=None):
+def make_dataset(product, sources, extent, center_time, valid_data=None, uri=None, app_info=None,
+                 start_time=None, end_time=None):
     """
     Create :class:`datacube.model.Dataset` for the data
 
@@ -177,6 +182,8 @@ def make_dataset(product, sources, extent, center_time, valid_data=None, uri=Non
     :param center_time: time of the central point of the dataset
     :param str uri: The uri of the dataset
     :param dict app_info: Additional metadata to be stored about the generation of the product
+    :param start_time: start time of the dataset (defaults to `center_time`)
+    :param end_time: end time of the dataset (defaults to `center_time`)
     :rtype: class:`Dataset`
     """
     document = {}
@@ -186,7 +193,7 @@ def make_dataset(product, sources, extent, center_time, valid_data=None, uri=Non
     merge(document, band_info(product.measurements.keys()))
     merge(document, source_info(sources))
     merge(document, geobox_info(extent, valid_data))
-    merge(document, time_info(center_time))
+    merge(document, time_info(center_time, start_time, end_time))
     merge(document, app_info or {})
 
     return Dataset(product,
