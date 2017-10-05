@@ -46,60 +46,82 @@ class AnalyticsEngineV2(object):
              - job/result
                - status
         '''
-        def fake_worker_thread(ae, job):
+        def job_starts(ae, job, job_type='subjob'):
+            '''Set job and then all its results to running status.'''
             job_id = job['id']
-            time.sleep(0.15)
             ae.store.set_job_status(job_id, JobStatuses.RUNNING)
-            self.logger.debug('Job {:03d} is now {}'
-                              .format(job_id, ae.store.get_job_status(job_id).name))
+            self.logger.debug('Job {:03d} ({}) is now {}'
+                              .format(job_id, job_type, ae.store.get_job_status(job_id).name))
             time.sleep(0.15)
-            ae.store.set_job_status(job_id, JobStatuses.COMPLETED)
-            self.logger.debug('Job {:03d} is now {}'
-                              .format(job_id, ae.store.get_job_status(job_id).name))
-
             for result_descriptor in job['result_descriptors'].values():
                 result_id = result_descriptor['id']
                 ae.store.set_result_status(result_id, JobStatuses.RUNNING)
-                self.logger.debug('Result {:03d}-{:03d} is now {}'
-                                  .format(job_id, result_id,
+                self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
+                                  .format(job_id, result_id, job_type,
                                           ae.store.get_result_status(result_id).name))
+
+        def job_finishes(ae, job, job_type='subjob'):
+            '''Set all job results then the job itself to completed status.'''
+            job_id = job['id']
+            for result_descriptor in job['result_descriptors'].values():
+                result_id = result_descriptor['id']
+                ae.store.set_result_status(result_id, JobStatuses.COMPLETED)
+                self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
+                                  .format(job_id, result_id, job_type,
+                                          ae.store.get_result_status(result_id).name))
+            time.sleep(0.15)
+            ae.store.set_job_status(job_id, JobStatuses.COMPLETED)
+            self.logger.debug('Job {:03d} ({}) is now {}'
+                              .format(job_id, job_type, ae.store.get_job_status(job_id).name))
+
+        def fake_worker_thread(ae, job):
+            '''Start the job, save results, then set it as completed.'''
+            job_id = job['id']
+            job_starts(ae, job)
+            for result_descriptor in job['result_descriptors'].values():
+                result_id = result_descriptor['id']
                 # TODO: Uncomment and test with AWS credentials:
                 # ae._save_results()
-                ae.store.set_result_status(result_id, JobStatuses.COMPLETED)
-                self.logger.debug('Result {:03d}-{:03d} is now {}'
-                                  .format(job_id, result_id,
-                                          ae.store.get_result_status(result_id).name))
+            job_finishes(ae, job)
+
+        def wait_for_workers(store, decomposed):
+            '''Base job only completes once all subjobs are complete.'''
+            jobs_ready = False
+            for tstep in range(10): # max 10 checks with 0.5 sec delay
+                all_statuses = [] # store all job and result statuses in this list
+                for job in decomposed['jobs']:
+                    try:
+                        all_statuses.append(store.get_job_status(job['id']))
+                    except ValueError as e:
+                        pass
+                    for result_descriptor in job['result_descriptors'].values():
+                        try:
+                            all_statuses.append(store.get_result_status(result_descriptor['id']))
+                        except ValueError as e:
+                            pass
+                if any(js != JobStatuses.COMPLETED for js in all_statuses):
+                    time.sleep(0.5)
+                else:
+                    jobs_ready = True
+                    break
+            if not jobs_ready:
+                raise RuntimeError('Some subjobs did not complete')
+
 
         function_type = self._determine_function_type(func)
         decomposed = self._decompose(function_type, func, data, ttl=1, chunk=None)
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
 
+        # Base job starts
+        job_starts(self, decomposed['base'], 'base')
+
+        # All subjobs run and complete in the background
         for job in decomposed['jobs']:
             Thread(target=fake_worker_thread, args=(self, job)).start()
 
-        # Check worker job status and set status of base job.
-        jobs_ready = False
-        for tstep in range(10): # max 10 checks with 0.5 sec delay
-            all_statuses = [] # store all job and result statuses in this list
-            for job in decomposed['jobs']:
-                try:
-                    all_statuses.append(self.store.get_job_status(job['id']))
-                except ValueError as e:
-                    pass
-                for result_descriptor in job['result_descriptors'].values():
-                    try:
-                        all_statuses.append(self.store.get_result_status(result_descriptor['id']))
-                    except ValueError as e:
-                        pass
-            if any(js != JobStatuses.COMPLETED for js in all_statuses):
-                time.sleep(0.5)
-            else:
-                jobs_ready = True
-                break
-
-        if jobs_ready:
-            self.store.set_job_status(decomposed['base']['id'], JobStatuses.COMPLETED)
-
+        # Base job waits for workers then finishes
+        wait_for_workers(self.store, decomposed)
+        job_finishes(self, decomposed['base'], 'base')
 
         return self._create_jro(decomposed['base'])
 
@@ -235,4 +257,4 @@ class AnalyticsEngineV2(object):
             'id': job['result_id'],
             'results': job['result_descriptors']
         }
-        return JobResult(job_descriptor, result_descriptor, self.store)
+        return JobResult(job_descriptor, result_descriptor)

@@ -47,7 +47,7 @@ from enum import Enum
 import xarray as xr
 
 import datacube
-from .utils.store_handler import ResultTypes, StoreHandler
+from .utils.store_handler import ResultTypes
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
@@ -59,13 +59,20 @@ class JobResult(object):
     jro.results.masking.red_mask[:, 0:100, 0:100]
     """
 
-    def __init__(self, job_info, result_info, store_handler):
+    def __init__(self, job_info, result_info):
         """Initialise the Job/Result object.
         """
-        self._job = Job(job_info)
-        self._results = Results(result_info)
-        # to enable access to redis store:
-        self._store = store_handler
+        self._client = None
+        self._job = Job(self, job_info)
+        self._results = Results(self, result_info)
+
+    @property
+    def client(self):
+        return self._client
+
+    @client.setter
+    def client(self, client):
+        self._client = client
 
     def to_dict(self):
         return {
@@ -87,12 +94,6 @@ class JobResult(object):
     def results(self):
         return self._results
 
-    @property
-    def status(self):
-        """status of the job (queued, running, complete, cancelled, errored)
-        """
-        return self._store.get_job_status(self._job.id)
-
 
 class Job(object):
     """
@@ -108,7 +109,8 @@ class Job(object):
     """
     _id = 0
 
-    def __init__(self, job_info):
+    def __init__(self, jro, job_info):
+        self._jro = jro
         self._job_info = job_info
         self._id = self._job_info['id']
         # unpack other required info
@@ -116,7 +118,7 @@ class Job(object):
     def to_dict(self):
         return {
             'id': self._id,
-            'status': self.status()
+            'status': self.status
         }
 
     def __repr__(self):
@@ -131,10 +133,14 @@ class Job(object):
         """
         return self._id
 
+    @property
     def status(self):
         """status of the job (queued, running, complete, cancelled, errored)
         """
-        pass
+        status = None
+        if self._jro.client:
+            status = self._jro.client.get_status(self)
+        return status
 
     def cancel(self):
         """cancels job in progress
@@ -358,7 +364,8 @@ class Results(object):
             results.red.delete() - delete result 'red' from storage (interim in S3 or ingested/indexed in ODC)
     """
 
-    def __init__(self, result_info):
+    def __init__(self, jro, result_info):
+        self._jro = jro
         self._result_info = result_info
         self._datasets = Dotify({})
         # unpack result_info and popular internal variables
@@ -369,7 +376,7 @@ class Results(object):
     def to_dict(self):
         return {
             'id': self._id,
-            'status': self.status(),
+            'status': self.status,
             'datasets': {k: v.to_dict() for k, v in self._datasets.items()}
         }
 
@@ -391,8 +398,12 @@ class Results(object):
         """
         return self._datasets
 
+    @property
     def status(self):
-        pass
+        status = None
+        if self._jro.client:
+            status = self._jro.client.get_status(self)
+        return status
 
     def metadata(self):
         pass

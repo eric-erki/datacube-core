@@ -14,6 +14,7 @@ import pytest
 import datacube.analytics.job_result
 from datacube.analytics.utils.store_handler import *
 from datacube.analytics.analytics_engine2 import AnalyticsEngineV2
+from datacube.analytics.analytics_client import AnalyticsClient
 
 import logging
 
@@ -123,12 +124,12 @@ def test_submit_job(store_handler, redis_config):
         'x': (149.25, 149.35),
         'y': (-35.25, -35.35)
     }
-    engine = AnalyticsEngineV2(redis_config)
-    jro = engine.submit_python_function(base_function, data)
+    client = AnalyticsClient(redis_config)
+    jro = client.submit_python_function(base_function, data)
     # end up with 27 redis keys at this point
 
     logger.debug('JRO\n{}'.format(jro))
-    logger.debug('Store dump\n{}'.format(engine.store.str_dump()))
+    logger.debug('Store dump\n{}'.format(client._engine.store.str_dump()))
 
     # Ensure an id is set for the job and one of its datasets
     assert isinstance(jro.job.id, int)
@@ -144,14 +145,14 @@ def test_submit_job(store_handler, redis_config):
 
     # Base job should be complete unless something went wrong with worker threads.
     # submit_python_function currently waits until jobs complete then sets base job status
-    assert jro.status == JobStatuses.COMPLETED
+    assert jro.job.status == JobStatuses.COMPLETED
 
     # check data stored correctly
-    final_job = engine.store.get_job(jro.job.id)
-    assert engine.store.get_data(final_job.data_id) == data
+    final_job = client._engine.store.get_job(jro.job.id)
+    assert client._engine.store.get_data(final_job.data_id) == data
 
     # there should be at least one job dependency
-    job_dep = engine.store.get_job_dependencies(jro.job.id)
+    job_dep = client._engine.store.get_job_dependencies(jro.job.id)
     assert len(job_dep[0]) > 0
 
     # Leave time to fake workers to complete their tasks then flush the store
