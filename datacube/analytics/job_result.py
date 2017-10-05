@@ -93,6 +93,7 @@ class JobResult(object):
         """
         return self._store.get_job_status(self._job.id)
 
+
 class Job(object):
     """
     job: object to query job.
@@ -195,6 +196,7 @@ class LazyArray(object):
         self._id = self._array_info['id']
         self._type = self._array_info['type']
         self._load_type = self._array_info['load_type']
+        self._query = {}
 
         if self._type == ResultTypes.S3IO:
             self._base_name = self._array_info['base_name']
@@ -202,7 +204,7 @@ class LazyArray(object):
             self._shape = self._array_info['shape']
             self._chunk = self._array_info['chunk']
             self._dtype = self._array_info['dtype']
-        elif self._type == ResultTypes.DC_LOAD:
+        elif self._type == ResultTypes.INDEXED:
             self._query = self._array_info['query']
 
     def to_dict(self):
@@ -215,7 +217,7 @@ class LazyArray(object):
                 'chunk': self._chunk,
                 'dtype': self._dtype
             }
-        elif self._type == ResultTypes.DC_LOAD:
+        elif self._type == ResultTypes.INDEXED:
             return {'query': self._query}
 
     def __repr__(self):
@@ -287,9 +289,17 @@ class LazyArray(object):
                 zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
                 return xr.DataArray(dask_array(zipped, self._shape, self._chunk, self._dtype, self._bucket)
                                     [bounded_slice])
-        elif self._type == ResultTypes.DC_LOAD:
+        elif self._type == ResultTypes.INDEXED:
+            # Todo: Do this properly
+            #       1. EAGER: Retrieve only what is asked for, code in testbed, moving over soon.
+            #       2. DASK: use dask_chunks in dc.load
+            #       3. EAGER_CACHED: cache chunks with integer index.
             dc = datacube.Datacube(app='dc-example')
-            return dc.load(self._query, use_threads=True)
+            data = dc.load(use_threads=True, **self._query).to_array()[0]
+            if not isinstance(slices, tuple):
+                slices = (slices,)
+
+            return data[slices]
         else:
             raise Exception("Undefined storage type")
 
