@@ -47,7 +47,7 @@ from enum import Enum
 import xarray as xr
 
 import datacube
-from .utils.store_handler import ResultTypes
+from .utils.store_handler import ResultTypes, StoreHandler
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
@@ -59,11 +59,13 @@ class JobResult(object):
     jro.results.masking.red_mask[:, 0:100, 0:100]
     """
 
-    def __init__(self, job_info, result_info):
+    def __init__(self, job_info, result_info, store_handler):
         """Initialise the Job/Result object.
         """
         self._job = Job(job_info)
         self._results = Results(result_info)
+        # to enable access to redis store:
+        self._store = store_handler
 
     def to_dict(self):
         return {
@@ -85,6 +87,11 @@ class JobResult(object):
     def results(self):
         return self._results
 
+    @property
+    def status(self):
+        """status of the job (queued, running, complete, cancelled, errored)
+        """
+        return self._store.get_job_status(self._job.id)
 
 class Job(object):
     """

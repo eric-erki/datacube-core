@@ -77,6 +77,30 @@ class AnalyticsEngineV2(object):
         for job in decomposed['jobs']:
             Thread(target=fake_worker_thread, args=(self, job)).start()
 
+        # Check worker job status and set status of base job.
+        jobs_ready = False
+        for tstep in range(10): # max 10 checks with 0.5 sec delay
+            all_statuses = [] # store all job and result statuses in this list
+            for job in decomposed['jobs']:
+                try:
+                    all_statuses.append(self.store.get_job_status(job['id']))
+                except ValueError as e:
+                    pass
+                for result_descriptor in job['result_descriptors'].values():
+                    try:
+                        all_statuses.append(self.store.get_result_status(result_descriptor['id']))
+                    except ValueError as e:
+                        pass
+            if any(js != JobStatuses.COMPLETED for js in all_statuses):
+                time.sleep(0.5)
+            else:
+                jobs_ready = True
+                break
+
+        if jobs_ready:
+            self.store.set_job_status(decomposed['base']['id'], JobStatuses.COMPLETED)
+
+
         return self._create_jro(decomposed['base'])
 
     def _determine_function_type(self, func):
@@ -211,4 +235,4 @@ class AnalyticsEngineV2(object):
             'id': job['result_id'],
             'results': job['result_descriptors']
         }
-        return JobResult(job_descriptor, result_descriptor)
+        return JobResult(job_descriptor, result_descriptor, self.store)
