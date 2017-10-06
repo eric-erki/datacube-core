@@ -187,6 +187,181 @@ class Datacube(object):
         return measurements
 
     #: pylint: disable=too-many-arguments, too-many-locals
+    def metadata_for_load(self, product=None, measurements=None, output_crs=None, resolution=None, resampling=None,
+                          stack=False, like=None, align=None, datasets=None, **query):
+        """
+        Builds metadata required for the datacube.load_data function.
+
+        **Product and Measurements**
+            A product can be specified using the product name, or by search fields that uniquely describe a single
+            product.
+            ::
+
+                product='ls5_ndvi_albers'
+
+            See :meth:`list_products` for the list of products with their names and properties.
+
+            A product can also be selected by searched using fields, but must only match one product.
+            ::
+
+                platform='LANDSAT_5',
+                product_type='ndvi'
+
+            The ``measurements`` argument is a list of measurement names, as listed in :meth:`list_measurements`.
+            If not provided, all measurements for the product will be returned.
+            ::
+
+                measurements=['red', 'nir', swir2']
+
+        **Dimensions**
+            Spatial dimensions can specified using the ``longitude``/``latitude`` and ``x``/``y`` fields.
+
+            The CRS of this query is assumed to be WGS84/EPSG:4326 unless the ``crs`` field is supplied,
+            even if the stored data is in another projection or the `output_crs` is specified.
+            The dimensions ``longitude``/``latitude`` and ``x``/``y`` can be used interchangeably.
+            ::
+
+                latitude=(-34.5, -35.2), longitude=(148.3, 148.7)
+
+            or ::
+
+                x=(1516200, 1541300), y=(-3867375, -3867350), crs='EPSG:3577'
+
+            The ``time`` dimension can be specified using a tuple of datetime objects or strings with
+            `YYYY-MM-DD hh:mm:ss` format. E.g::
+
+                time=('2001-04', '2001-07')
+
+            For EO-specific datasets that are based around scenes, the time dimension can be reduced to the day level,
+            using solar day to keep scenes together.
+            ::
+
+                group_by='solar_day'
+
+            For data that has different values for the scene overlap the requires more complex rules for combining data,
+            such as GA's Pixel Quality dataset, a function can be provided to the merging into a single time slice.
+            ::
+
+                def pq_fuser(dest, src):
+                    valid_bit = 8
+                    valid_val = (1 << valid_bit)
+
+                    no_data_dest_mask = ~(dest & valid_val).astype(bool)
+                    np.copyto(dest, src, where=no_data_dest_mask)
+
+                    both_data_mask = (valid_val & dest & src).astype(bool)
+                    np.copyto(dest, src & dest, where=both_data_mask)
+
+        **Output**
+            If the `stack` argument is supplied, the returned data is stacked in a single ``DataArray``.
+            A new dimension is created with the name supplied.
+            This requires all of the data to be of the same datatype.
+
+            To reproject or resample the data, supply the ``output_crs``, ``resolution``, ``resampling`` and ``align``
+            fields.
+
+            To reproject data to 25m resolution for EPSG:3577::
+
+                dc.load(product='ls5_nbar_albers', x=(148.15, 148.2), y=(-35.15, -35.2), time=('1990', '1991'),
+                        output_crs='EPSG:3577`, resolution=(-25, 25), resampling='cubic')
+
+        :param str product: the product to be included.
+
+        :param measurements:
+            measurements name or list of names to be included, as listed in :meth:`list_measurements`.
+                If a list is specified, the measurements will be returned in the order requested.
+                By default all available measurements are included.
+
+        :type measurements: list(str), optional
+
+        :param query:
+            Search parameters for products and dimension ranges as described above.
+
+        :param str output_crs:
+            The CRS of the returned data.  If no CRS is supplied, the CRS of the stored data is used.
+
+        :param (float,float) resolution:
+            A tuple of the spatial resolution of the returned data.
+            This includes the direction (as indicated by a positive or negative number).
+
+            Typically when using most CRSs, the first number would be negative.
+
+        :param str resampling:
+            The resampling method to use if re-projection is required.
+
+            Valid values are: ``'nearest', 'cubic', 'bilinear', 'cubic_spline', 'lanczos', 'average'``
+
+            Defaults to ``'nearest'``.
+
+        :param (float,float) align:
+            Load data such that point 'align' lies on the pixel boundary.
+            Units are in the co-ordinate space of the output CRS.
+
+            Default is (0,0)
+
+        :param stack: The name of the new dimension used to stack the measurements.
+            If provided, the data is returned as a :class:`xarray.DataArray` rather than a :class:`xarray.Dataset`.
+
+            If only one measurement is returned, the dimension name is not used and the dimension is dropped.
+
+        :type stack: str or bool
+
+        :param xarray.Dataset like:
+            Uses the output of a previous ``load()`` to form the basis of a request for another product.
+            E.g.::
+
+                pq = dc.load(product='ls5_pq_albers', like=nbar_dataset)
+
+        :param str group_by:
+            When specified, perform basic combining/reducing of the data.
+
+        :param datasets:
+            Optional. If this is a non-empty list of :class:`datacube.model.Dataset` objects, these will be loaded
+            instead of performing a database lookup.
+
+        :return: a dict containing 'grouped', 'geobox', and 'measurements_values' for datacube.load_data.
+
+        """
+        observations = datasets or self.find_datasets(product=product, like=like, **query)
+        if not observations:
+            return None if stack else xarray.Dataset()
+
+        if like:
+            assert output_crs is None, "'like' and 'output_crs' are not supported together"
+            assert resolution is None, "'like' and 'resolution' are not supported together"
+            assert align is None, "'like' and 'align' are not supported together"
+            geobox = like.geobox
+        else:
+            if output_crs:
+                if not resolution:
+                    raise RuntimeError("Must specify 'resolution' when specifying 'output_crs'")
+                crs = geometry.CRS(output_crs)
+            else:
+                grid_spec = self.index.products.get_by_name(product).grid_spec
+                if not grid_spec or not grid_spec.crs:
+                    raise RuntimeError("Product has no default CRS. Must specify 'output_crs' and 'resolution'")
+                crs = grid_spec.crs
+                if not resolution:
+                    if not grid_spec.resolution:
+                        raise RuntimeError("Product has no default resolution. Must specify 'resolution'")
+                    resolution = grid_spec.resolution
+                    align = align or grid_spec.alignment
+            geobox = geometry.GeoBox.from_geopolygon(query_geopolygon(**query) or get_bounds(observations, crs),
+                                                     resolution, crs, align)
+
+        group_by = query_group_by(**query)
+        grouped = self.group_datasets(observations, group_by)
+
+        measurements = self.index.products.get_by_name(product).lookup_measurements(measurements)
+        measurements = set_resampling_method(measurements, resampling)
+
+        metadata = {}
+        metadata['grouped'] = grouped
+        metadata['geobox'] = geobox
+        metadata['measurements_values'] = measurements.values()
+        return metadata
+
+    #: pylint: disable=too-many-arguments, too-many-locals
     def load(self, product=None, measurements=None, output_crs=None, resolution=None, resampling=None, stack=False,
              dask_chunks=None, like=None, fuse_func=None, align=None, datasets=None, use_threads=False, **query):
         """
@@ -345,40 +520,9 @@ class Datacube(object):
 
         :rtype: :class:`xarray.Dataset` or :class:`xarray.DataArray`
         """
-        observations = datasets or self.find_datasets(product=product, like=like, **query)
-        if not observations:
-            return None if stack else xarray.Dataset()
-
-        if like:
-            assert output_crs is None, "'like' and 'output_crs' are not supported together"
-            assert resolution is None, "'like' and 'resolution' are not supported together"
-            assert align is None, "'like' and 'align' are not supported together"
-            geobox = like.geobox
-        else:
-            if output_crs:
-                if not resolution:
-                    raise RuntimeError("Must specify 'resolution' when specifying 'output_crs'")
-                crs = geometry.CRS(output_crs)
-            else:
-                grid_spec = self.index.products.get_by_name(product).grid_spec
-                if not grid_spec or not grid_spec.crs:
-                    raise RuntimeError("Product has no default CRS. Must specify 'output_crs' and 'resolution'")
-                crs = grid_spec.crs
-                if not resolution:
-                    if not grid_spec.resolution:
-                        raise RuntimeError("Product has no default resolution. Must specify 'resolution'")
-                    resolution = grid_spec.resolution
-                    align = align or grid_spec.alignment
-            geobox = geometry.GeoBox.from_geopolygon(query_geopolygon(**query) or get_bounds(observations, crs),
-                                                     resolution, crs, align)
-
-        group_by = query_group_by(**query)
-        grouped = self.group_datasets(observations, group_by)
-
-        measurements = self.index.products.get_by_name(product).lookup_measurements(measurements)
-        measurements = set_resampling_method(measurements, resampling)
-
-        result = self.load_data(grouped, geobox, measurements.values(),
+        metadata = self.metadata_for_load(product, measurements, output_crs, resolution, resampling,
+                                          stack, like, align, datasets, **query)
+        result = self.load_data(metadata['grouped'], metadata['geobox'], metadata['measurements_values'],
                                 fuse_func=fuse_func, dask_chunks=dask_chunks, use_threads=use_threads,
                                 driver_manager=self.driver_manager)
         if not stack:
