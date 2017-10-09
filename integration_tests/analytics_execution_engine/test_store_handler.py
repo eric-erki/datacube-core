@@ -464,3 +464,173 @@ def test_set_result_status(store_handler, user_data):
     # Invalid status: string instead of Enum
     with pytest.raises(ValueError):
         store_handler.set_result_status(9, 'Hello')
+
+
+class LogObject(object):
+    '''A dummy user-defined job logs object.'''
+    def __init__(self, base_str, num_logs):
+        self._logs = ['{} #{:03d}'.format(base_str, i) for i in range(num_logs)]
+
+    @property
+    def logs(self):
+        return self._logs
+
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.logs == other.logs
+        else:
+            return False
+
+
+def test_job_logs(store_handler, user_data):
+    '''Test the addition and retrieval of various types of job logs.'''
+    store_handler._store.flushdb()
+    expected_jobs = {}
+    expected_results = {}
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            result_ids = []
+            for result in job['results']:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    job_id = list(expected_jobs.keys())[0]
+    # Create various log items to be tested
+    logs = [
+        'Test log 1',
+        'Test log 2',
+        '''Test longer
+        log text.''',
+        999.999,
+        LogObject('Test log object', 10)
+    ]
+    # Add the logs
+    for log in logs:
+        store_handler.add_job_logs(job_id, log)
+    # Validate order and values of retrieved logs
+    retrieved = store_handler.get_job_logs(job_id)
+    assert len(retrieved) == len(logs)
+    for log_no, log in enumerate(logs):
+        retrieved[log_no] == log
+
+
+def test_result_logs(store_handler, user_data):
+    '''Test the addition and retrieval of various types of job logs.'''
+    store_handler._store.flushdb()
+    expected_jobs = {}
+    expected_results = {}
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            result_ids = []
+            for result in job['results']:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    assert len(expected_results) > 0, 'No results to assess, please check test'
+    result_id = list(expected_results.keys())[0]
+    # Create various log items to be tested
+    logs = [
+        'Test log 1',
+        'Test log 2',
+        '''Test longer
+        log text.''',
+        999.999,
+        LogObject('Test log object', 10)
+    ]
+    # Add the logs
+    for log in logs:
+        store_handler.add_result_logs(result_id, log)
+    # Validate order and values of retrieved logs
+    retrieved = store_handler.get_result_logs(result_id)
+    assert len(retrieved) == len(logs)
+    for log_no, log in enumerate(logs):
+        retrieved[log_no] == log
+
+
+def test_system_logs(store_handler, user_data):
+    '''Test the addition and retrieval of various types of system logs.'''
+    store_handler._store.flushdb()
+    expected_jobs = {}
+    expected_results = {}
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            result_ids = []
+            for result in job['results']:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id
+            }
+
+    assert len(expected_jobs) > 0, 'No jobs to assess, please check test'
+    job_id = list(expected_jobs.keys())[0]
+    # Create various log items to be tested
+    logs = [
+        'Test log 1',
+        'Test log 2',
+        '''Test longer
+        log text.''',
+        999.999,
+        LogObject('Test log object', 10)
+    ]
+    # Add the logs
+    for log in logs:
+        store_handler.add_system_logs(job_id, log)
+    # Validate order and values of retrieved logs
+    retrieved = store_handler.get_system_logs(job_id)
+    assert len(retrieved) == len(logs)
+    for log_no, log in enumerate(logs):
+        retrieved[log_no] == log

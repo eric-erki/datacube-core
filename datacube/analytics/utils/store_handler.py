@@ -69,7 +69,7 @@ class KeyConcurrencyError(Exception):
     '''Error raised when a race condition arises when acccessing a key.'''
     pass
 
-
+# pylint: disable=too-many-public-methods
 class StoreHandler(object):
     '''Main interface to the data store.'''
 
@@ -78,9 +78,11 @@ class StoreHandler(object):
     K_JOBS = 'jobs'
     K_DATA = 'data'
     K_RESULTS = 'results'
+    K_SYSTEM = 'system'
     K_COUNT = 'total'
     K_DEPENDENCIES = 'dependencies'
     K_STATS = 'stats'
+    K_LOGS = 'logs'
     K_STATS_STATUS = 'status'
     # pylint: disable=not-an-iterable
     K_LISTS = {status: status.name.lower() for status in JobStatuses}
@@ -106,6 +108,10 @@ class StoreHandler(object):
     def _make_stats_key(self, key, item_id):
         '''Build a redis key for a specific item stats.'''
         return self._make_key(key, self.K_STATS, item_id)
+
+    def _make_logs_key(self, key, item_id):
+        '''Build a redis key for a specific item logs.'''
+        return self._make_key(key, self.K_LOGS, item_id)
 
     def _add_item(self, key, item):
         '''Add an item to its queue list according to  its key type.
@@ -171,6 +177,22 @@ class StoreHandler(object):
                 pipe.execute()
             except WatchError:
                 raise KeyConcurrencyError('Status key modified by third-party while I was editing it')
+
+    def _add_item_logs(self, key, item_id, logs):
+        '''Add logs for a specific item.
+
+        The new logs get pickled an appended to the current list of item logs.
+        '''
+        self._store.rpush(self._make_logs_key(key, str(item_id)),
+                          dumps(logs, byref=True))
+
+    def _get_item_logs(self, key, item_id):
+        '''Return the list of item logs.
+
+        Each log may itself be a list or object.
+        '''
+        return [loads(log) for log in
+                self._store.lrange(self._make_logs_key(key, str(item_id)), 0, -1)]
 
     def add_job(self, function_type, function, data, result_id, ttl=-1, chunk=None):
         '''Add an new function and its data to the queue.
@@ -264,6 +286,48 @@ class StoreHandler(object):
     def set_result_status(self, result_id, status):
         '''Changes the status of a single result.'''
         return self._set_item_status(self.K_RESULTS, result_id, status)
+
+    def add_job_logs(self, job_id, logs):
+        '''Add logs for a specific job.
+
+        The new logs get pickled an appended to the current list of job logs.
+        '''
+        return self._add_item_logs(self.K_JOBS, job_id, logs)
+
+    def get_job_logs(self, job_id):
+        '''Return the list of job logs.
+
+        Each log may itself be a list or object.
+        '''
+        return self._get_item_logs(self.K_JOBS, job_id)
+
+    def add_result_logs(self, result_id, logs):
+        '''Add logs for a specific result.
+
+        The new logs get pickled an appended to the current list of result logs.
+        '''
+        return self._add_item_logs(self.K_RESULTS, result_id, logs)
+
+    def get_result_logs(self, result_id):
+        '''Return the list of result logs.
+
+        Each log may itself be a list or object.
+        '''
+        return self._get_item_logs(self.K_RESULTS, result_id)
+
+    def add_system_logs(self, job_id, logs):
+        '''Add system logs for a specific job.
+
+        The new logs get pickled an appended to the current list of system logs.
+        '''
+        return self._add_item_logs(self.K_SYSTEM, job_id, logs)
+
+    def get_system_logs(self, job_id):
+        '''Return the list of system logs.
+
+        Each log may itself be a list or object.
+        '''
+        return self._get_item_logs(self.K_SYSTEM, job_id)
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''
