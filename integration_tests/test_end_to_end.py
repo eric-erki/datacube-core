@@ -117,6 +117,7 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir):
     check_analytics_ndvi_mask_median_expression(driver_manager)
     check_analytics_ndvi_mask_median_expression_storage_type(driver_manager)
     check_analytics_pixel_drill(driver_manager)
+    check_data_load_via_jro(driver_manager)
 
 
 def run_click_command(command, args):
@@ -719,3 +720,33 @@ def check_analytics_pixel_drill(driver_manager):
     assert e.cache['b40']['array_result'][var1].size > 0
     assert e.cache['b30']['array_result'][var2].size > 0
     assert e.cache['pq']['array_result'][pq_var].size > 0
+
+
+def check_data_load_via_jro(driver_manager):
+    '''
+    Check retrieve data from dc.load the same as retieved data from job result object, assuming the same query/
+    '''
+    from datacube.analytics.job_result import JobResult, LoadType
+    from datacube.analytics.utils.store_handler import ResultTypes
+    from datacube.api.core import Datacube
+    dc = Datacube(driver_manager=driver_manager)
+
+    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+
+    blue_descriptor = \
+        {'id': 10,
+         'type': ResultTypes.INDEXED,
+         'load_type': LoadType.EAGER,
+         'query': {'product': 'ls5_nbar_albers', 'measurements': ['blue'],
+                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
+    red_descriptor = \
+        {'id': 11,
+         'type': ResultTypes.INDEXED,
+         'load_type': LoadType.EAGER,
+         'query': {'product': 'ls5_nbar_albers', 'measurements': ['red'],
+                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
+    result_info = {'id': 123, 'results': {'red': red_descriptor, 'blue': blue_descriptor}}
+    job_info = {'id': 123}
+    jro = JobResult(job_info, result_info)
+
+    numpy.testing.assert_array_equal(jro.results.blue[:, :].values, data_array.blue.values)
