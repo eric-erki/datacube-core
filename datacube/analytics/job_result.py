@@ -205,7 +205,7 @@ class LazyArray(object):
         self._load_type = self._array_info['load_type']
         self._query = {}
 
-        if self._type == ResultTypes.S3IO:
+        if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             self._base_name = self._array_info['base_name']
             self._bucket = self._array_info['bucket']
             self._shape = self._array_info['shape']
@@ -215,7 +215,7 @@ class LazyArray(object):
             self._query = self._array_info['query']
 
     def to_dict(self):
-        if self._type == ResultTypes.S3IO:
+        if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             return {
                 'id': self._id,
                 'base_name': self._base_name,
@@ -233,32 +233,34 @@ class LazyArray(object):
     def __str__(self):
         return pformat(self.to_dict(), indent=2)
 
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals, too-many-branches
     def __getitem__(self, slices):
         """Slicing operator to retrieve data stored on S3/DataCube
         Todo:
             - chunk cache memory management in case near memory limit
                 - unload least used and stream as required from S3
         """
-        def dask_array(zipped, shape, chunks, dtype, bucket):
+        def dask_array(zipped, shape, chunks, dtype, bucket, use_s3):
 
             dsk = {}
             name = zipped[0][0]
             for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
                 required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
                 idx = (name,) + np.unravel_index(chunk_id, chunk_shape)
-                s3lio = S3LIO(True, True, None, 30)
+                s3lio = S3LIO(True, use_s3, None, 30)
                 dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
 
             return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
 
-        if self._type == ResultTypes.S3IO:
+        if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             if not isinstance(slices, tuple):
                 slices = (slices,)
 
             bounded_slice = self._bounded_slice(slices, self._shape)
-
-            s3lio = S3LIO(True, True, None, 30)
+            use_s3 = True
+            if self._type == ResultTypes.FILE:
+                use_s3 = False
+            s3lio = S3LIO(True, use_s3, None, 30)
             keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
                 s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice, False)
 
@@ -289,12 +291,11 @@ class LazyArray(object):
             elif self._load_type == LoadType.DASK:
                 full_slice = self._bounded_slice((slice(None, None),), self._shape)
 
-                s3lio = S3LIO(True, True, None, 30)
                 keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
                     s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, full_slice, False)
 
                 zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
-                return xr.DataArray(dask_array(zipped, self._shape, self._chunk, self._dtype, self._bucket)
+                return xr.DataArray(dask_array(zipped, self._shape, self._chunk, self._dtype, self._bucket, use_s3)
                                     [bounded_slice])
         elif self._type == ResultTypes.INDEXED:
             # Todo: Do this properly
