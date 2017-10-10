@@ -205,15 +205,15 @@ class AnalyticsEngineV2(object):
     def _decompose_data(self, data, chunk):
         '''Decompose data into a list of chunks.'''
         # == Partial implementation ==
-        metadata = self.dc.metadata_for_load(**data)
-        storage = self.dc.driver_manager.drivers['s3'].storage
-        _, indices, _ = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
+        # metadata = self.dc.metadata_for_load(**data)
+        # storage = self.dc.driver_manager.drivers['s3'].storage
+        # _, indices, _ = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
         # decomposed_data['metadata'] = metadata
         # fails pickling in python 2.7
-        decomposed_data['indices'] = indices
+        # decomposed_data['indices'] = indices
         return decomposed_data
 
     def _decompose_function(self, function, data):
