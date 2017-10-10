@@ -85,6 +85,24 @@ class S3LIO(object):
         var1 = map(self.chunk_indices_1d, repeat(0), shape, chunk, array_slice, repeat(return_as_shape))
         return product(*var1)
 
+    def create_indices(self, shape, chunk_size, base_name, spread=False):
+        """Create indices for simple array structure.
+
+        :param tuple shape: shape of the array
+        :param tuple chunk_size: chunk size to use for storage
+        :param str base_name: The base name for the S3 key
+        :param bool spread: Flag to use a deterministic hash as a prefix.
+        :return: Returns a tuple of (keys, indices, chunk ids)
+        """
+        if chunk_size is None:
+            chunk_size = shape
+        idx = list(self.chunk_indices_nd(shape, chunk_size))
+        chunk_ids = [i for i in range(len(idx))]
+        keys = [base_name+'_'+str(i) for i in chunk_ids]
+        if spread:
+            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
+        return keys, idx, chunk_ids
+
     def put_array_in_s3(self, array, chunk_size, base_name, bucket, spread=False):
         """Put array in S3.
 
@@ -93,13 +111,9 @@ class S3LIO(object):
         :param str base_name: The base name for the S3 key
         :param str bucket: S3 bucket to use
         :param bool spread: Flag to use a deterministic hash as a prefix.
-        :return: Returns the a a dict of (keys, indices, chunk ids)
+        :return: Returns a dict of (keys, indices, chunk ids)
         """
-        idx = list(self.chunk_indices_nd(array.shape, chunk_size))
-        chunk_ids = [i for i in range(len(idx))]
-        keys = [base_name+'_'+str(i) for i in chunk_ids]
-        if spread:
-            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
+        keys, idx, chunk_ids = self.create_indices(array.shape, chunk_size, base_name, spread)
         self.shard_array_to_s3(array, idx, bucket, keys)
         return list(zip(keys, idx, chunk_ids))
 
@@ -111,12 +125,9 @@ class S3LIO(object):
         :param str base_name: The base name for the S3 key
         :param str bucket: S3 bucket to use
         :param bool spread: Flag to use a deterministic hash as a prefix.
-        :return: Returns the a a dict of (keys, indices, chunk ids)
+        :return: Returns a dict of (keys, indices, chunk ids)
         """
-        idx = list(self.chunk_indices_nd(array.shape, chunk_size))
-        keys = [base_name+'_'+str(i) for i in range(len(idx))]
-        if spread:
-            keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
+        keys, idx, chunk_ids = self.create_indices(array.shape, chunk_size, base_name, spread)
         self.shard_array_to_s3_mp(array, idx, bucket, keys)
         return list(zip(keys, idx))
 

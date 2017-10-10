@@ -169,11 +169,11 @@ def test_submit_invalid_job(store_handler, redis_config):
     engine = AnalyticsEngineV2(redis_config)
 
     # submit bad data that is not a dictionary
-    with pytest.raises(AttributeError):
+    with pytest.raises(TypeError):
         engine.submit_python_function(lambda x: x, [1, 2, 3, 4])
 
     # submit bad data that is a dict but does not have any measurements
-    with pytest.raises(KeyError):
+    with pytest.raises(LookupError):
         engine.submit_python_function(lambda x: x, {'a': 1, 'b': 2})
 
     store_handler._store.flushdb()

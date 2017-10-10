@@ -358,7 +358,7 @@ class Datacube(object):
         metadata = {}
         metadata['grouped'] = grouped
         metadata['geobox'] = geobox
-        metadata['measurements_values'] = measurements.values()
+        metadata['measurements_values'] = measurements
         return metadata
 
     #: pylint: disable=too-many-arguments, too-many-locals
@@ -522,7 +522,7 @@ class Datacube(object):
         """
         metadata = self.metadata_for_load(product, measurements, output_crs, resolution, resampling,
                                           stack, like, align, datasets, **query)
-        result = self.load_data(metadata['grouped'], metadata['geobox'], metadata['measurements_values'],
+        result = self.load_data(metadata['grouped'], metadata['geobox'], metadata['measurements_values'].values(),
                                 fuse_func=fuse_func, dask_chunks=dask_chunks, use_threads=use_threads,
                                 driver_manager=self.driver_manager)
         if not stack:

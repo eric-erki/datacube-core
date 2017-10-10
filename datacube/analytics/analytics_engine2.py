@@ -12,6 +12,7 @@ from uuid import uuid4
 import numpy as np
 from pprint import pformat
 
+from datacube import Datacube
 from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
@@ -22,6 +23,7 @@ class AnalyticsEngineV2(object):
     def __init__(self, store_config):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.store = StoreHandler(**store_config)
+        self.dc = Datacube()
         self.logger.debug('Ready')
 
     def submit_python_function(self, func, data, ttl=1, chunk=None, *args, **kwargs):
@@ -107,9 +109,8 @@ class AnalyticsEngineV2(object):
             if not jobs_ready:
                 raise RuntimeError('Some subjobs did not complete')
 
-
         function_type = self._determine_function_type(func)
-        decomposed = self._decompose(function_type, func, data, ttl=1, chunk=None)
+        decomposed = self._decompose(function_type, func, data, ttl, chunk)
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
 
         # Base job starts
@@ -141,7 +142,7 @@ class AnalyticsEngineV2(object):
         '''
         # == Mock implementation ==
         # Prepare the sub-jobs and base job info
-        jobs = self._create_jobs(function, data)
+        jobs = self._create_jobs(function, data, chunk)
         base = self._create_base_job(function_type, function, data, ttl, chunk, jobs)
         return {
             'base': base,
@@ -192,23 +193,27 @@ class AnalyticsEngineV2(object):
         self._store_job(job, dependent_job_ids)
         return job
 
-    def _create_jobs(self, function, data):
+    def _create_jobs(self, function, data, chunk=None):
         '''Decompose data and function into a list of jobs.'''
-        job_data = self._decompose_data(data)
+        job_data = self._decompose_data(data, chunk)
         jobs = self._decompose_function(function, job_data)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
         return jobs
 
-    def _decompose_data(self, data):
+    def _decompose_data(self, data, chunk):
         '''Decompose data into a list of chunks.'''
-        # == Mock implementation ==
+        # == Partial implementation ==
+        metadata = self.dc.metadata_for_load(**data)
+        storage = self.dc.driver_manager.drivers['s3'].storage
+        _, indices, _ = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
         from copy import deepcopy
-        decomposed_data = deepcopy(data)
-        decomposed_data.update({
-            'slice': (2, 200, 200)
-        })
+        decomposed_data = {}
+        decomposed_data['query'] = deepcopy(data)
+        # decomposed_data['metadata'] = metadata
+        # fails pickling in python 2.7
+        decomposed_data['indices'] = indices
         return decomposed_data
 
     def _decompose_function(self, function, data):
@@ -220,9 +225,8 @@ class AnalyticsEngineV2(object):
             'function_type': FunctionTypes.PICKLED,
             'function': decomposed_function,
             'data': data,
-            'result_descriptors': self._create_result_descriptors(data['measurements'])
+            'result_descriptors': self._create_result_descriptors(data['query']['measurements'])
         }]
-
 
     def _save_results(self):
         s3lio = S3LIO(True, True, None, 30)
