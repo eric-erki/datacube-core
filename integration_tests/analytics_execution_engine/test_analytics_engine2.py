@@ -105,7 +105,7 @@ def user_data():
     return users
 
 
-def test_submit_job(store_handler, redis_config):
+def test_submit_job(store_handler, redis_config, driver_manager):
     '''Test the submission of a job.
 
     This test function needs further work to test the JRO and corresponding store values.
@@ -124,7 +124,7 @@ def test_submit_job(store_handler, redis_config):
         'x': (149.25, 149.35),
         'y': (-35.25, -35.35)
     }
-    client = AnalyticsClient(redis_config)
+    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
     jro = client.submit_python_function(base_function, data)
     # end up with 27 redis keys at this point
 
@@ -161,12 +161,12 @@ def test_submit_job(store_handler, redis_config):
     store_handler._store.flushdb()
 
 
-def test_submit_invalid_job(store_handler, redis_config):
+def test_submit_invalid_job(store_handler, redis_config, driver_manager):
     '''
     Test for failure of job submission when passing insufficient data or wrong type
     '''
     store_handler._store.flushdb()
-    engine = AnalyticsEngineV2(redis_config)
+    engine = AnalyticsEngineV2(redis_config, driver_manager=driver_manager)
 
     # submit bad data that is not a dictionary
     with pytest.raises(TypeError):

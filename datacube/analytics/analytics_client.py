@@ -24,7 +24,7 @@ class AnalyticsClient(object):
     communication/task management framework.
     '''
 
-    def __init__(self, store_config):
+    def __init__(self, store_config, driver_manager=None):
         '''Initialise the client.
 
         :param dict store_config: A dictionary of store parameters, for the relevant type of store,
@@ -34,7 +34,7 @@ class AnalyticsClient(object):
         configuration allowing to send tasks to a remote engine.
         '''
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._engine = AnalyticsEngineV2(store_config)
+        self._engine = AnalyticsEngineV2(store_config, driver_manager=driver_manager)
         self.logger.debug('Ready')
 
     def submit_python_function(self, function, data, ttl=1, chunk=None, *args, **kwargs):
