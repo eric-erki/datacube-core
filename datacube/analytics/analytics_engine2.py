@@ -23,7 +23,7 @@ class AnalyticsEngineV2(object):
     def __init__(self, store_config, driver_manager=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.store = StoreHandler(**store_config)
-        self.dc = Datacube(driver_manager=None)
+        self.dc = Datacube(driver_manager=driver_manager)
         self.logger.debug('Ready')
 
     def submit_python_function(self, func, data, ttl=1, chunk=None, *args, **kwargs):
