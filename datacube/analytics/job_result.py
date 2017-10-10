@@ -59,12 +59,12 @@ class JobResult(object):
     jro.results.masking.red_mask[:, 0:100, 0:100]
     """
 
-    def __init__(self, job_info, result_info):
+    def __init__(self, job_info, result_info, driver_manager=None):
         """Initialise the Job/Result object.
         """
         self._client = None
         self._job = Job(self, job_info)
-        self._results = Results(self, result_info)
+        self._results = Results(self, result_info, driver_manager)
 
     @property
     def client(self):
@@ -193,10 +193,11 @@ class LazyArray(object):
     # chunk cache {chunk_id: bytes}
     _cache = {}
 
-    def __init__(self, array_info):
+    def __init__(self, array_info, driver_manager=None):
         """Initialise the array with array_info:
         """
         self._array_info = array_info
+        self._driver_manager = driver_manager
 
         # unpack result_info and popular internal variables
         self._id = self._array_info['id']
@@ -300,7 +301,7 @@ class LazyArray(object):
             #       1. EAGER: Retrieve only what is asked for, code in testbed, moving over soon.
             #       2. DASK: use dask_chunks in dc.load
             #       3. EAGER_CACHED: cache chunks with integer index.
-            dc = datacube.Datacube(app='dc-example')
+            dc = datacube.Datacube(driver_manager=self._driver_manager)
             data = dc.load(use_threads=True, **self._query).to_array()[0]
             if not isinstance(slices, tuple):
                 slices = (slices,)
@@ -364,14 +365,14 @@ class Results(object):
             results.red.delete() - delete result 'red' from storage (interim in S3 or ingested/indexed in ODC)
     """
 
-    def __init__(self, jro, result_info):
+    def __init__(self, jro, result_info, driver_manager=None):
         self._jro = jro
         self._result_info = result_info
         self._datasets = Dotify({})
         # unpack result_info and popular internal variables
         self._id = self._result_info['id']
         for k, v in self._result_info['results'].items():
-            self._add_array(k, v)
+            self._add_array(k, v, driver_manager)
 
     def to_dict(self):
         return {
@@ -420,8 +421,8 @@ class Results(object):
         """
         pass
 
-    def _add_array(self, name, array_info):
-        self._datasets.update({name: LazyArray(array_info)})
+    def _add_array(self, name, array_info, driver_manager=None):
+        self._datasets.update({name: LazyArray(array_info, driver_manager)})
 
     def __getattr__(self, key):
         if key in self._datasets:

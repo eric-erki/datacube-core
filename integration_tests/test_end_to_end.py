@@ -747,6 +747,6 @@ def check_data_load_via_jro(driver_manager):
                    'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
     result_info = {'id': 123, 'results': {'red': red_descriptor, 'blue': blue_descriptor}}
     job_info = {'id': 123}
-    jro = JobResult(job_info, result_info)
+    jro = JobResult(job_info, result_info, driver_manager)
 
-    numpy.testing.assert_array_equal(jro.results.blue[:, :].values, data_array.blue.values)
+    numpy.testing.assert_array_equal(jro.results.blue[:, :, :].values, data_array.blue.values)
