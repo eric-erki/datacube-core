@@ -177,3 +177,96 @@ def test_submit_invalid_job(store_handler, redis_config, driver_manager):
         engine.submit_python_function(lambda x: x, {'a': 1, 'b': 2})
 
     store_handler._store.flushdb()
+
+
+def check_data_load_via_jro(driver_manager):
+    '''
+    Check retrieve data from dc.load the same as retieved data from job result object, assuming the same query/
+    '''
+    from datacube.analytics.job_result import JobResult, LoadType
+    from datacube.analytics.utils.store_handler import ResultTypes
+    from datacube.api.core import Datacube
+    dc = Datacube(driver_manager=driver_manager)
+
+    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+
+    blue_descriptor = \
+        {'id': 10,
+         'type': ResultTypes.INDEXED,
+         'load_type': LoadType.EAGER,
+         'query': {'product': 'ls5_nbar_albers', 'measurements': ['blue'],
+                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
+    red_descriptor = \
+        {'id': 11,
+         'type': ResultTypes.INDEXED,
+         'load_type': LoadType.EAGER,
+         'query': {'product': 'ls5_nbar_albers', 'measurements': ['red'],
+                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
+    result_info = {'id': 123, 'results': {'red': red_descriptor, 'blue': blue_descriptor}}
+    job_info = {'id': 123}
+    jro = JobResult(job_info, result_info, driver_manager)
+
+    import numpy
+    numpy.testing.assert_array_equal(jro.results.blue[:, :, :].values, data_array.blue.values)
+
+
+def check_submit_job(store_handler, redis_config, driver_manager):
+    '''Test the following:
+        - the submission of a job with real data
+        - decomposition
+        - execute function
+        - save data
+        - construct JRO
+        - check JRO.
+
+    This is a stub.
+    '''
+
+    logger = logging.getLogger(__name__)
+    logger.debug('Started.')
+
+    store_handler._store.flushdb()
+
+    def base_function(data):
+        return data
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.25, 149.35),
+        'y': (-35.25, -35.35)
+    }
+    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
+    jro = client.submit_python_function(base_function, data)
+    # end up with 27 redis keys at this point
+
+    logger.debug('JRO\n{}'.format(jro))
+    logger.debug('Store dump\n{}'.format(client._engine.store.str_dump()))
+
+    # Ensure an id is set for the job and one of its datasets
+    assert isinstance(jro.job.id, int)
+    assert isinstance(jro.results.datasets['blue'].to_dict()['id'], int)
+
+    # Check the dataset base name
+    assert jro.results.datasets['blue'].to_dict()['base_name'] == 'jro_test_blue'
+
+    # chunk and shape
+    for k, ds in jro.results.datasets.items():
+        assert ds.to_dict()['chunk'] == (2, 2, 2)
+        assert ds.to_dict()['shape'] == (4, 4, 4)
+
+    # Base job should be complete unless something went wrong with worker threads.
+    # submit_python_function currently waits until jobs complete then sets base job status
+    assert jro.job.status == JobStatuses.COMPLETED
+
+    # check data stored correctly
+    final_job = client._engine.store.get_job(jro.job.id)
+    assert client._engine.store.get_data(final_job.data_id) == data
+
+    # there should be at least one job dependency
+    job_dep = client._engine.store.get_job_dependencies(jro.job.id)
+    assert len(job_dep[0]) > 0
+
+    # Leave time to fake workers to complete their tasks then flush the store
+    from time import sleep
+    sleep(0.4)
+    store_handler._store.flushdb()

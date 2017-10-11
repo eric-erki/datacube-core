@@ -13,7 +13,8 @@ from pathlib import Path
 import datacube.scripts.cli_app
 from datacube.compat import string_types
 from datacube.drivers.manager import DriverManager
-
+from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
+        check_data_load_via_jro, check_submit_job, redis_config, store_handler
 import imp
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -65,7 +66,7 @@ def copy_and_update_ingestion_configs(destination, output_dir, configs):
 
 
 @pytest.mark.usefixtures('default_metadata_type')
-def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir):
+def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir, store_handler, redis_config):
     """
     Loads two dataset configurations, then ingests a sample Landsat 5 scene
 
@@ -118,6 +119,7 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir):
     check_analytics_ndvi_mask_median_expression_storage_type(driver_manager)
     check_analytics_pixel_drill(driver_manager)
     check_data_load_via_jro(driver_manager)
+    check_submit_job(store_handler, redis_config, driver_manager)
 
 
 def run_click_command(command, args):
@@ -720,33 +722,3 @@ def check_analytics_pixel_drill(driver_manager):
     assert e.cache['b40']['array_result'][var1].size > 0
     assert e.cache['b30']['array_result'][var2].size > 0
     assert e.cache['pq']['array_result'][pq_var].size > 0
-
-
-def check_data_load_via_jro(driver_manager):
-    '''
-    Check retrieve data from dc.load the same as retieved data from job result object, assuming the same query/
-    '''
-    from datacube.analytics.job_result import JobResult, LoadType
-    from datacube.analytics.utils.store_handler import ResultTypes
-    from datacube.api.core import Datacube
-    dc = Datacube(driver_manager=driver_manager)
-
-    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-
-    blue_descriptor = \
-        {'id': 10,
-         'type': ResultTypes.INDEXED,
-         'load_type': LoadType.EAGER,
-         'query': {'product': 'ls5_nbar_albers', 'measurements': ['blue'],
-                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
-    red_descriptor = \
-        {'id': 11,
-         'type': ResultTypes.INDEXED,
-         'load_type': LoadType.EAGER,
-         'query': {'product': 'ls5_nbar_albers', 'measurements': ['red'],
-                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
-    result_info = {'id': 123, 'results': {'red': red_descriptor, 'blue': blue_descriptor}}
-    job_info = {'id': 123}
-    jro = JobResult(job_info, result_info, driver_manager)
-
-    numpy.testing.assert_array_equal(jro.results.blue[:, :, :].values, data_array.blue.values)
