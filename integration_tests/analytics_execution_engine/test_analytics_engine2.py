@@ -24,52 +24,6 @@ logging.basicConfig(level=logging.DEBUG)
 redis = pytest.importorskip('redis')
 
 
-DEFAULT_CONFIG_FILES = [expanduser('~/.datacube.conf'),
-                        expanduser('~/.datacube_integration.conf'),
-                        str(Path(__file__).parent.parent.joinpath('agdcintegration.conf')),
-                        str(Path(__file__).parent.joinpath('./.datacube.conf')),
-                        str(Path(__file__).parent.joinpath('./.datacube_integration.conf'))]
-'''Config files from which to pull redis config. The `redis` section in any such file gets merged if
-present, later files overwriting earlier ones if the same fields are set again.'''
-
-DEFAULT_REDIS_CONFIG = {
-    'host': '127.0.0.1',
-    'port': 6379,
-    'db': 0,
-    'password': None
-}
-'''Default redis config. It gets merged with/overwritten by the config files.'''
-
-
-@pytest.fixture(scope='module')
-def redis_config():
-    '''Retrieve and test the redis configuration.
-
-    Configuration is retrieved from `DEFAULT_CONFIG_FILES` or `DEFAULT_REDIS_CONFIG`, and then ping
-    the server to check whether it's alive. If so, the config is returned. Otherwise, None is
-    returned and all tests in this file are skipped.
-    '''
-    # Source config
-    redis_config = DEFAULT_REDIS_CONFIG
-    config = ConfigParser()
-    config.read(DEFAULT_CONFIG_FILES)
-    if 'redis' in config:
-        redis_config.update(config['redis'])
-    # Test server
-    try:
-        store = redis.StrictRedis(**redis_config)
-        if store.ping():
-            # Select the DB with last index in the current store
-            redis_config['db'] = int(store.config_get('databases')['databases']) - 1
-            print('\nUsing redis config: {}'.format(redis_config))
-            return redis_config
-    except redis.exceptions.ConnectionError as conn_error:
-        pass
-    # Skill all tests
-    pytest.skip('No running redis server found at {}'.format(redis_config))
-    return None
-
-
 @pytest.fixture(scope='module')
 def store_handler(redis_config):
     '''Connect to the store and flushes the last DB.

@@ -14,7 +14,7 @@ import datacube.scripts.cli_app
 from datacube.compat import string_types
 from datacube.drivers.manager import DriverManager
 from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
-        check_data_load_via_jro, check_submit_job, redis_config, store_handler
+        check_data_load_via_jro, check_submit_job, store_handler
 import imp
 
 PROJECT_ROOT = Path(__file__).parents[1]
