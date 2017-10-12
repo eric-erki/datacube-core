@@ -3,19 +3,21 @@ Mock Analytics/Execution Engine Class for testing
 
 """
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function
 
 import logging
 import time
 from threading import Thread
 from uuid import uuid4
 import numpy as np
-from pprint import pformat
+from pprint import pformat, pprint
+from six.moves import zip
 
 from datacube import Datacube
 from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
+from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 
 class AnalyticsEngineV2(object):
@@ -76,21 +78,63 @@ class AnalyticsEngineV2(object):
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
 
-        def fake_worker_thread(ae, job):
+        def fake_worker_thread(ae, job, driver_manager=None):
             '''Start the job, save results, then set it as completed.'''
+            def _get_data(query, chunk=None, driver_manager=None):
+                '''Retrieves data for worker'''
+                dc = Datacube(driver_manager=driver_manager)
+                if chunk is None:
+                    return self.dc.load(use_threads=True, **query)
+                else:
+                    metadata = self.dc.metadata_for_load(**query)
+                    return self.dc.load_data(metadata['grouped'], metadata['geobox'][chunk],
+                                             metadata['measurements_values'].values(),
+                                             driver_manager=dc.driver_manager, use_threads=True)
+
+            def _save_array_in_s3(array, base_name, bucket, chunk_id, use_s3, driver_manager=None):
+                '''Saves a single xarray.DataArray object to s3/s3-file storage'''
+                s3_objects = []
+                import zstd
+                s3_key = '_'.join([base_name, array.name, str(chunk_id)])
+                s3_object = {}
+                s3_object['base_name'] = array.name
+                s3_object['bucket'] = bucket
+                s3_object['key'] = s3_key
+                s3_object['shape'] = array.shape
+                s3_object['dtype'] = array.dtype
+                s3_objects.append(s3_object)
+                print("Persisting to ", bucket, s3_key)
+                data = bytes(array.data)
+                cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
+                data = cctx.compress(data)
+                s3io = S3IO(use_s3, None)
+                s3io.put_bytes(bucket, s3_key, data)
+                return s3_objects
+
             job_id = job['id']
             job_starts(ae, job)
-            for result_descriptor in job['result_descriptors'].values():
-                result_id = result_descriptor['id']
-                # TODO: Uncomment and test with AWS credentials:
-                # ae._save_results()
+
+            # Get data for worker here
+            data = _get_data(job['data']['query'], job['slice'])
+
+            # Execute function here
+
+            # Save results here
+            # map input to output
+            # todo: pass in parameters from submit_python_function
+            #       - storage parameters
+            #       - naming parameters
+            #       - unique key name
+            for array_name in data.data_vars:
+                _save_array_in_s3(data[array_name], array_name, 'ae_results', job['chunk_id'], False)
+
             job_finishes(ae, job)
 
         def wait_for_workers(store, decomposed):
             '''Base job only completes once all subjobs are complete.'''
             jobs_ready = False
-            for tstep in range(10): # max 10 checks with 0.5 sec delay
-                all_statuses = [] # store all job and result statuses in this list
+            for tstep in range(30):  # max 10 checks with 0.5 sec delay
+                all_statuses = []  # store all job and result statuses in this list
                 for job in decomposed['jobs']:
                     try:
                         all_statuses.append(store.get_job_status(job['id']))
@@ -118,7 +162,7 @@ class AnalyticsEngineV2(object):
 
         # All subjobs run and complete in the background
         for job in decomposed['jobs']:
-            Thread(target=fake_worker_thread, args=(self, job)).start()
+            Thread(target=fake_worker_thread, args=(self, job, self.dc.driver_manager)).start()
 
         # Base job waits for workers then finishes
         wait_for_workers(self.store, decomposed)
@@ -205,15 +249,17 @@ class AnalyticsEngineV2(object):
     def _decompose_data(self, data, chunk):
         '''Decompose data into a list of chunks.'''
         # == Partial implementation ==
-        # metadata = self.dc.metadata_for_load(**data)
-        # storage = self.dc.driver_manager.drivers['s3'].storage
-        # _, indices, _ = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
+        metadata = self.dc.metadata_for_load(**data)
+        storage = self.dc.driver_manager.drivers['s3'].storage
+        _, indices, chunk_ids = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
+        # metadata should be part of decomposed_data so loading on the workers does not require a database connection
         # decomposed_data['metadata'] = metadata
         # fails pickling in python 2.7
-        # decomposed_data['indices'] = indices
+        decomposed_data['indices'] = indices
+        decomposed_data['chunk_ids'] = chunk_ids
         return decomposed_data
 
     def _decompose_function(self, function, data):
@@ -221,14 +267,21 @@ class AnalyticsEngineV2(object):
         # == Mock implementation ==
         def decomposed_function(data):
             return data
-        return [{
-            'function_type': FunctionTypes.PICKLED,
-            'function': decomposed_function,
-            'data': data,
-            'result_descriptors': self._create_result_descriptors(data['query']['measurements'])
-        }]
+        results = []
+        for chunk_id, s in zip(data['chunk_ids'], data['indices']):
+            result = {
+                'function_type': FunctionTypes.PICKLED,
+                'function': decomposed_function,
+                'data': data,
+                'slice': s,
+                'chunk_id': chunk_id,
+                'result_descriptors': self._create_result_descriptors(data['query']['measurements'])
+            }
+            results.append(result)
+        return results
 
     def _save_results(self):
+        # == Mock implementation ==
         s3lio = S3LIO(True, True, None, 30)
 
         red = np.arange(4 * 4 * 4, dtype=np.uint8).reshape((4, 4, 4))

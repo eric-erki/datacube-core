@@ -105,62 +105,6 @@ def user_data():
     return users
 
 
-def test_submit_job(store_handler, redis_config, driver_manager):
-    '''Test the submission of a job.
-
-    This test function needs further work to test the JRO and corresponding store values.
-    '''
-
-    logger = logging.getLogger(__name__)
-    logger.debug('Started.')
-
-    store_handler._store.flushdb()
-
-    def base_function(data):
-        return data
-    data = {
-        'product': 'ls5_nbar_albers',
-        'measurements': ['blue', 'red'],
-        'x': (149.25, 149.35),
-        'y': (-35.25, -35.35)
-    }
-    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
-    jro = client.submit_python_function(base_function, data)
-    # end up with 27 redis keys at this point
-
-    logger.debug('JRO\n{}'.format(jro))
-    logger.debug('Store dump\n{}'.format(client._engine.store.str_dump()))
-
-    # Ensure an id is set for the job and one of its datasets
-    assert isinstance(jro.job.id, int)
-    assert isinstance(jro.results.datasets['blue'].to_dict()['id'], int)
-
-    # Check the dataset base name
-    assert jro.results.datasets['blue'].to_dict()['base_name'] == 'jro_test_blue'
-
-    # chunk and shape
-    for k, ds in jro.results.datasets.items():
-        assert ds.to_dict()['chunk'] == (2, 2, 2)
-        assert ds.to_dict()['shape'] == (4, 4, 4)
-
-    # Base job should be complete unless something went wrong with worker threads.
-    # submit_python_function currently waits until jobs complete then sets base job status
-    assert jro.job.status == JobStatuses.COMPLETED
-
-    # check data stored correctly
-    final_job = client._engine.store.get_job(jro.job.id)
-    assert client._engine.store.get_data(final_job.data_id) == data
-
-    # there should be at least one job dependency
-    job_dep = client._engine.store.get_job_dependencies(jro.job.id)
-    assert len(job_dep[0]) > 0
-
-    # Leave time to fake workers to complete their tasks then flush the store
-    from time import sleep
-    sleep(0.4)
-    store_handler._store.flushdb()
-
-
 def test_submit_invalid_job(store_handler, redis_config, driver_manager):
     '''
     Test for failure of job submission when passing insufficient data or wrong type
@@ -220,6 +164,8 @@ def check_submit_job(store_handler, redis_config, driver_manager):
         - check JRO.
 
     This is a stub.
+
+    This test function needs further work to test the JRO and corresponding store values.
     '''
 
     logger = logging.getLogger(__name__)
@@ -232,8 +178,8 @@ def check_submit_job(store_handler, redis_config, driver_manager):
     data = {
         'product': 'ls5_nbar_albers',
         'measurements': ['blue', 'red'],
-        'x': (149.25, 149.35),
-        'y': (-35.25, -35.35)
+        'x': (149.07, 149.18),
+        'y': (-35.32, -35.28)
     }
     client = AnalyticsClient(redis_config, driver_manager=driver_manager)
     jro = client.submit_python_function(base_function, data)
