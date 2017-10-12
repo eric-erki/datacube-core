@@ -41,6 +41,9 @@ default_environment: datacube
 
 [datacube]
 # Inherit all defaults.
+redis.host: 127.0.0.1
+redis.port: 6379
+redis.db: 0
 """
 
 
@@ -134,6 +137,15 @@ class LocalConfig(object):
             # The default driver for the current environment
             self._environment_prop('default_driver')
         )
+
+    @property
+    def redis_config(self):
+        return {
+            'host': self._environment_prop('redis.host'),
+            'port': int(self._environment_prop('redis.port')),
+            'db': int(self._environment_prop('redis.db')),
+            'password': self._environment_prop('redis.password')
+        }
 
     @property
     def db_password(self):
