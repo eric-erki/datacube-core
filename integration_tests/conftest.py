@@ -101,13 +101,13 @@ class MockIndex(object):
         return self._db.url
 
 
-@pytest.fixture
-def integration_config_paths(tmpdir):
-    test_tile_folder = str(tmpdir.mkdir('testdata'))
+@pytest.fixture(scope='session')
+def integration_config_paths(tmpdir_factory):
+    test_tile_folder = str(tmpdir_factory.mktemp('testdata'))
     test_tile_folder = Path(test_tile_folder).as_uri()
-    eotiles_tile_folder = str(tmpdir.mkdir('eotiles'))
+    eotiles_tile_folder = str(tmpdir_factory.mktemp('eotiles'))
     eotiles_tile_folder = Path(eotiles_tile_folder).as_uri()
-    run_config_file = tmpdir.mkdir('config').join('test-run.conf')
+    run_config_file = tmpdir_factory.mktemp('config').join('test-run.conf')
     run_config_file.write(
         _SINGLE_RUN_CONFIG_TEMPLATE.format(test_tile_folder=test_tile_folder, eotiles_tile_folder=eotiles_tile_folder)
     )
@@ -127,7 +127,7 @@ def global_integration_cli_args(integration_config_paths):
     return list(itertools.chain(*(('--config_file', f) for f in integration_config_paths)))
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def local_config(integration_config_paths):
     return LocalConfig.find(integration_config_paths)
 
@@ -543,3 +543,24 @@ def shrink_storage_type(storage_type, variables, shrink_factors):
         storage['resolution'][var] = storage['resolution'][var] * shrink_factors[0]
         storage['chunking'][var] = storage['chunking'][var] / shrink_factors[1]
     return storage_type
+
+
+@pytest.fixture(scope='session')
+def redis_config(local_config):
+    '''Test the redis connection, skip dependent tests if any error.'''
+    # Skip all tests if redis cannot be imported
+    redis = pytest.importorskip('redis')
+    # Test server
+    redis_config = local_config.redis_config
+    try:
+        store = redis.StrictRedis(**redis_config)
+        if store.ping():
+            # Select the DB with last index in the current store
+            redis_config['db'] = int(store.config_get('databases')['databases']) - 1
+            print('\nUsing redis config: {}'.format(redis_config))
+            return redis_config
+    except redis.exceptions.ConnectionError as conn_error:
+        pass
+    # Skill all tests
+    pytest.skip('No running redis server found at {}'.format(redis_config))
+    return None
