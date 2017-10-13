@@ -50,33 +50,32 @@ class AnalyticsEngineV2(object):
              - job/result
                - status
         '''
-        def job_starts(ae, job, job_type='subjob'):
-            '''Set job and then all its results to running status.'''
-            job_id = job['id']
+        def job_starts(ae, job_id, job_type='subjob'):
+            '''Set job to running status.'''
             ae.store.set_job_status(job_id, JobStatuses.RUNNING)
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
-            time.sleep(0.15)
-            for result_descriptor in job['result_descriptors'].values():
-                result_id = result_descriptor['id']
-                ae.store.set_result_status(result_id, JobStatuses.RUNNING)
-                self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                                  .format(job_id, result_id, job_type,
-                                          ae.store.get_result_status(result_id).name))
 
-        def job_finishes(ae, job, job_type='subjob'):
-            '''Set all job results then the job itself to completed status.'''
-            job_id = job['id']
-            for result_descriptor in job['result_descriptors'].values():
-                result_id = result_descriptor['id']
-                ae.store.set_result_status(result_id, JobStatuses.COMPLETED)
-                self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                                  .format(job_id, result_id, job_type,
-                                          ae.store.get_result_status(result_id).name))
-            time.sleep(0.15)
+
+        def job_finishes(ae, job_id, job_type='subjob'):
+            '''Set job to completed status.'''
             ae.store.set_job_status(job_id, JobStatuses.COMPLETED)
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
+
+        def result_starts(ae, job_id, result_id, job_type='subjob'):
+            '''Set result to running status.'''
+            ae.store.set_result_status(result_id, JobStatuses.RUNNING)
+            self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
+                              .format(job_id, result_id, job_type,
+                                      ae.store.get_result_status(result_id).name))
+
+        def result_finishes(ae, job_id, result_id, job_type='subjob'):
+            '''Set result to completed status.'''
+            ae.store.set_result_status(result_id, JobStatuses.COMPLETED)
+            self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
+                              .format(job_id, result_id, job_type,
+                                      ae.store.get_result_status(result_id).name))
 
         def fake_worker_thread(ae, job, driver_manager=None):
             '''Start the job, save results, then set it as completed.'''
@@ -91,31 +90,32 @@ class AnalyticsEngineV2(object):
                                              metadata['measurements_values'].values(),
                                              driver_manager=dc.driver_manager, use_threads=True)
 
-            def _save_array_in_s3(array, base_name, bucket, chunk_id, use_s3, driver_manager=None):
+            def _compute_result(function, array, result_descriptor):
+                computed = function(array)
+                # Update result descriptor based on processed data
+                result_descriptor['shape'] = computed.shape
+                result_descriptor['dtype'] = computed.dtype
+                return computed
+
+            def _save_array_in_s3(array, result_descriptor, use_s3=False, driver_manager=None):
                 '''Saves a single xarray.DataArray object to s3/s3-file storage'''
-                s3_objects = []
-                import zstd
-                s3_key = '_'.join([base_name, array.name, str(chunk_id)])
-                s3_object = {}
-                s3_object['base_name'] = array.name
-                s3_object['bucket'] = bucket
-                s3_object['key'] = s3_key
-                s3_object['shape'] = array.shape
-                s3_object['dtype'] = array.dtype
-                s3_objects.append(s3_object)
-                print("Persisting to ", bucket, s3_key)
+                self.logger.debug('Persisting computed result to %s-%s',
+                                  result_descriptor['bucket'], result_descriptor['base_name'])
                 data = bytes(array.data)
+                import zstd
                 cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
                 data = cctx.compress(data)
                 s3io = S3IO(use_s3, None)
-                s3io.put_bytes(bucket, s3_key, data)
-                return s3_objects
+                s3io.put_bytes(result_descriptor['bucket'], result_descriptor['base_name'], data)
 
             job_id = job['id']
-            job_starts(ae, job)
+            job_starts(ae, job_id)
 
             # Get data for worker here
             data = _get_data(job['data']['query'], job['slice'])
+            if not set(data.data_vars) == set(job['result_descriptors'].keys()):
+                raise ValueError('Inconsistent variables in data and result descriptors:\n{} vs. {}'.format(
+                    set(data.data_vars), set(job['result_descriptors'].keys())))
 
             # Execute function here
 
@@ -125,15 +125,40 @@ class AnalyticsEngineV2(object):
             #       - storage parameters
             #       - naming parameters
             #       - unique key name
-            for array_name in data.data_vars:
-                _save_array_in_s3(data[array_name], array_name, 'ae_results', job['chunk_id'], False)
+            for array_name, result_descriptor in job['result_descriptors'].items():
+                result_id = result_descriptor['id']
+                # Mark result as running in store
+                result_starts(ae, job_id, result_id)
+                # Compute and save result
+                computed = _compute_result(job['function'], data[array_name], result_descriptor)
+                _save_array_in_s3(computed, result_descriptor)
+                # Mark result as completed in store
+                result_finishes(ae, job_id, result_id)
+            job_finishes(ae, job_id)
 
-            job_finishes(ae, job)
+        def fake_base_worker_thread(ae, decomposed, driver_manager=None):
+            '''Start and track the subjobs.'''
+            # Base job starts
+            job_id = decomposed['base']['id']
+            job_starts(ae, job_id, 'base')
+            for result_descriptor in decomposed['base']['result_descriptors'].values():
+                result_starts(ae, job_id, result_descriptor['id'], 'base')
+
+            # All subjobs run and complete in the background
+            for job in decomposed['jobs']:
+                Thread(target=fake_worker_thread, args=(ae, job, driver_manager)).start()
+
+            # Base job waits for workers then finishes
+            wait_for_workers(ae.store, decomposed)
+            for result_descriptor in decomposed['base']['result_descriptors'].values():
+                result_finishes(ae, job_id, result_descriptor['id'], 'base')
+            job_finishes(ae, job_id, 'base')
+
 
         def wait_for_workers(store, decomposed):
             '''Base job only completes once all subjobs are complete.'''
             jobs_ready = False
-            for tstep in range(30):  # max 10 checks with 0.5 sec delay
+            for tstep in range(30):  # Cap the number of checks
                 all_statuses = []  # store all job and result statuses in this list
                 for job in decomposed['jobs']:
                     try:
@@ -146,7 +171,7 @@ class AnalyticsEngineV2(object):
                         except ValueError as e:
                             pass
                 if any(js != JobStatuses.COMPLETED for js in all_statuses):
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                 else:
                     jobs_ready = True
                     break
@@ -156,18 +181,8 @@ class AnalyticsEngineV2(object):
         function_type = self._determine_function_type(func)
         decomposed = self._decompose(function_type, func, data, ttl, chunk)
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
-
-        # Base job starts
-        job_starts(self, decomposed['base'], 'base')
-
-        # All subjobs run and complete in the background
-        for job in decomposed['jobs']:
-            Thread(target=fake_worker_thread, args=(self, job, self.dc.driver_manager)).start()
-
-        # Base job waits for workers then finishes
-        wait_for_workers(self.store, decomposed)
-        job_finishes(self, decomposed['base'], 'base')
-
+        # Run the base job in a thread so the JRO can be returned directly
+        Thread(target=fake_base_worker_thread, args=(self, decomposed, self.dc.driver_manager)).start()
         return self._create_jro(decomposed['base'])
 
     def _determine_function_type(self, func):
@@ -208,6 +223,9 @@ class AnalyticsEngineV2(object):
             result_id = self.store.add_result(result_metadata)
             # Assign id to result descriptor dict (in place)
             descriptor['id'] = result_id
+            # TODO: Do we want to add the band name or chunk id in the base name? It is not
+            # necessary as the result_id is unique already
+            descriptor['base_name'] = 'result_{:07d}'.format(result_id)
             result_ids.append(result_id)
         result_id = self.store.add_result(result_ids)
         job_id = self.store.add_job(job['function_type'],
@@ -297,11 +315,11 @@ class AnalyticsEngineV2(object):
             descriptors[band] = {
                 'type': ResultTypes.S3IO,
                 'load_type': LoadType.EAGER,
-                'base_name': 'jro_test_{}'.format(band),
+                'base_name': None,  # Not yet known
                 'bucket': 'eetest',
-                'shape': (4, 4, 4),
+                'shape': None,  # Not yet known
                 'chunk': (2, 2, 2),
-                'dtype': np.uint8
+                'dtype': None  # Not yet known
             }
         return descriptors
 
