@@ -142,7 +142,11 @@ class StoreHandler(object):
 
     def _get_item(self, key, item_id):
         '''Retrieve a specific item by its key type and id.'''
-        return loads(self._store.get(self._make_key(key, str(item_id))))
+        key = self._make_key(key, str(item_id))
+        value = self._store.get(key)
+        if not value:
+            raise ValueError('Invalid key "{}" or missing data in store'.format(key))
+        return loads(value)
 
     def _get_item_status(self, key, item_id):
         '''Retrieve the status of an item.'''
@@ -328,6 +332,33 @@ class StoreHandler(object):
         Each log may itself be a list or object.
         '''
         return self._get_item_logs(self.K_SYSTEM, job_id)
+
+    def get_job_progress(self, job_id):
+        '''Return the progress of a job.
+
+        This returns a tuple (number_of_completed_dependent_jobs,
+        total_number_of_dependent_jobs).
+        '''
+        jids = self.get_job_dependencies(job_id)[0]
+        return (
+            sum([self.get_job_status(jid) == JobStatuses.COMPLETED for jid in jids]),
+            len(jids)
+        )
+
+    def get_result_progress(self, result_id):
+        '''Return the progress of a result.
+
+        If the result is a list of results, then this returns a tuple
+        (number_of_completed_sub_results, total_number_of_sub_results). If the result is a
+        ResultMetadata, then return (1 if completed else 0, 1).
+        '''
+        result = self.get_result(result_id)
+        if isinstance(result, ResultMetadata):
+            return (int(self.get_result_status(result_id) == JobStatuses.COMPLETED), 1)
+        return (
+            sum([self.get_result_status(rid) == JobStatuses.COMPLETED for rid in result]),
+            len(result)
+        )
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''
