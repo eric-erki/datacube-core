@@ -14,7 +14,7 @@ import datacube.scripts.cli_app
 from datacube.compat import string_types
 from datacube.drivers.manager import DriverManager
 from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
-        check_data_load_via_jro, check_submit_job, store_handler
+        check_submit_job, check_do_the_math, store_handler
 import imp
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -118,8 +118,8 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir, s
     check_analytics_ndvi_mask_median_expression(driver_manager)
     check_analytics_ndvi_mask_median_expression_storage_type(driver_manager)
     check_analytics_pixel_drill(driver_manager)
-    check_data_load_via_jro(driver_manager)
     check_submit_job(store_handler, redis_config, driver_manager)
+    check_do_the_math(store_handler, redis_config, driver_manager)
 
 
 def run_click_command(command, args):

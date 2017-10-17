@@ -326,7 +326,7 @@ class LazyArray(object):
                 else:
                     raise Exception("Slice: " + str(slices) + " is not within shape: : " + str(self._shape))
 
-        for idx, val in enumerate(range(len(self._shape) - len(bounded_slice))):
+        for idx in range(len(bounded_slice), len(self._shape)):
             bounded_slice += (slice(0, self._shape[idx]),)
 
         return bounded_slice

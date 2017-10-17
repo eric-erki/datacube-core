@@ -75,37 +75,6 @@ def test_submit_invalid_job(store_handler, redis_config, driver_manager):
     store_handler._store.flushdb()
 
 
-def check_data_load_via_jro(driver_manager):
-    '''
-    Check retrieve data from dc.load the same as retieved data from job result object, assuming the same query/
-    '''
-    from datacube.analytics.job_result import JobResult, LoadType
-    from datacube.analytics.utils.store_handler import ResultTypes
-    from datacube.api.core import Datacube
-    dc = Datacube(driver_manager=driver_manager)
-
-    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-
-    blue_descriptor = \
-        {'id': 10,
-         'type': ResultTypes.INDEXED,
-         'load_type': LoadType.EAGER,
-         'query': {'product': 'ls5_nbar_albers', 'measurements': ['blue'],
-                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
-    red_descriptor = \
-        {'id': 11,
-         'type': ResultTypes.INDEXED,
-         'load_type': LoadType.EAGER,
-         'query': {'product': 'ls5_nbar_albers', 'measurements': ['red'],
-                   'x': (149.07, 149.18), 'y': (-35.32, -35.28)}}
-    result_info = {'id': 123, 'results': {'red': red_descriptor, 'blue': blue_descriptor}}
-    job_info = {'id': 123}
-    jro = JobResult(job_info, result_info, driver_manager)
-
-    import numpy
-    numpy.testing.assert_array_equal(jro.results.blue[:, :, :].values, data_array.blue.values)
-
-
 def check_submit_job(store_handler, redis_config, driver_manager):
     '''Test the following:
         - the submission of a job with real data
@@ -135,7 +104,6 @@ def check_submit_job(store_handler, redis_config, driver_manager):
     }
     client = AnalyticsClient(redis_config, driver_manager=driver_manager)
     jro = client.submit_python_function(base_function, data)
-    # end up with 27 redis keys at this point
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -157,13 +125,23 @@ def check_submit_job(store_handler, redis_config, driver_manager):
 
     # chunk and shape
     for k, ds in jro.results.datasets.items():
-        assert ds.to_dict()['chunk'] == (2, 2, 2)
+        assert ds.to_dict()['chunk'] == (1, 231, 420)
         # TODO: implement JRO updates through new calls to the client --> engine
-        assert ds.to_dict()['shape'] is None  # (4, 4, 4)
 
     # Base job should be complete unless something went wrong with worker threads.
     # submit_python_function currently waits until jobs complete then sets base job status
     assert jro.job.status == JobStatuses.COMPLETED
+
+    # Retrieve result and check shape
+    returned_calc = jro.results.red[:]
+    assert(returned_calc.shape == (1, 231, 420))
+
+    # Retrieve data directly and check that results are same as data
+    from datacube.api.core import Datacube
+    dc = Datacube(driver_manager=driver_manager)
+    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+    import numpy
+    numpy.testing.assert_array_equal(returned_calc.values, data_array.red.values)
 
     # check data stored correctly
     final_job = client._engine.store.get_job(jro.job.id)
@@ -175,4 +153,49 @@ def check_submit_job(store_handler, redis_config, driver_manager):
 
     # Leave time to fake workers to complete their tasks then flush the store
     sleep(0.4)
+    store_handler._store.flushdb()
+
+
+def check_do_the_math(store_handler, redis_config, driver_manager):
+    """
+    Submit a function that does something
+    """
+    logger = logging.getLogger(__name__)
+    logger.debug('Started.')
+
+    # TODO: This kind of function not yet supported:
+    # import xarray as xr
+    # def general_calculation(data):
+    #     new_quantity = data['red'] + data['blue']
+    #     return xr.Dataset({'new_quantity': new_quantity})
+
+    # Simple transform
+    def band_transform(data):
+        return data + 1000
+
+    data_desc = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.07, 149.18),
+        'y': (-35.32, -35.28)
+    }
+    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
+    jro = client.submit_python_function(band_transform, data_desc)
+
+    # Wait a while for the main job to complete
+    for tstep in range(30):
+        if jro.job.status == JobStatuses.COMPLETED:
+            break
+        sleep(0.1)
+    assert jro.job.status == JobStatuses.COMPLETED
+
+    returned_calc = jro.results.red[:]
+
+    # Retrieve data directly and check that bands are transformed
+    from datacube.api.core import Datacube
+    dc = Datacube(driver_manager=driver_manager)
+    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+    import numpy
+    numpy.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
+
     store_handler._store.flushdb()

@@ -77,7 +77,7 @@ class AnalyticsEngineV2(object):
                               .format(job_id, result_id, job_type,
                                       ae.store.get_result_status(result_id).name))
 
-        def fake_worker_thread(ae, job, driver_manager=None):
+        def fake_worker_thread(ae, job, base_results, driver_manager=None):
             '''Start the job, save results, then set it as completed.'''
             def _get_data(query, chunk=None, driver_manager=None):
                 '''Retrieves data for worker'''
@@ -97,16 +97,17 @@ class AnalyticsEngineV2(object):
                 result_descriptor['dtype'] = computed.dtype
                 return computed
 
-            def _save_array_in_s3(array, result_descriptor, use_s3=False, driver_manager=None):
+            def _save_array_in_s3(array, result_descriptor, chunk_id, use_s3=False, driver_manager=None):
                 '''Saves a single xarray.DataArray object to s3/s3-file storage'''
+                s3_key = '_'.join([result_descriptor['base_name'], str(chunk_id)])
                 self.logger.debug('Persisting computed result to %s-%s',
-                                  result_descriptor['bucket'], result_descriptor['base_name'])
+                                  result_descriptor['bucket'], s3_key)
                 data = bytes(array.data)
                 import zstd
                 cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
                 data = cctx.compress(data)
                 s3io = S3IO(use_s3, None)
-                s3io.put_bytes(result_descriptor['bucket'], result_descriptor['base_name'], data)
+                s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
 
             job_id = job['id']
             job_starts(ae, job_id)
@@ -126,18 +127,20 @@ class AnalyticsEngineV2(object):
             #       - naming parameters
             #       - unique key name
             for array_name, result_descriptor in job['result_descriptors'].items():
+                base_result_descriptor = base_results[array_name]
                 result_id = result_descriptor['id']
                 # Mark result as running in store
                 result_starts(ae, job_id, result_id)
                 # Compute and save result
                 computed = _compute_result(job['function'], data[array_name], result_descriptor)
-                _save_array_in_s3(computed, result_descriptor)
+                _save_array_in_s3(computed, base_result_descriptor, job['chunk_id'])
                 # Mark result as completed in store
                 result_finishes(ae, job_id, result_id)
             job_finishes(ae, job_id)
 
         def fake_base_worker_thread(ae, decomposed, driver_manager=None):
             '''Start and track the subjobs.'''
+
             # Base job starts
             job_id = decomposed['base']['id']
             job_starts(ae, job_id, 'base')
@@ -146,19 +149,27 @@ class AnalyticsEngineV2(object):
 
             # All subjobs run and complete in the background
             for job in decomposed['jobs']:
-                Thread(target=fake_worker_thread, args=(ae, job, driver_manager)).start()
+                Thread(target=fake_worker_thread, args=(ae, job, decomposed['base']['result_descriptors'],
+                                                        driver_manager)).start()
 
             # Base job waits for workers then finishes
             wait_for_workers(ae.store, decomposed)
-            for result_descriptor in decomposed['base']['result_descriptors'].values():
-                result_finishes(ae, job_id, result_descriptor['id'], 'base')
+
+            job0 = decomposed['jobs'][0] # get first worker job and copy properties from it to base job
+            # TODO: this way of getting base result shape will not work if job data decomposed into smaller chunks
+            for array_name, result_descriptor in decomposed['base']['result_descriptors'].items():
+                result_id = result_descriptor['id']
+                result_finishes(ae, job_id, result_id, 'base')
+                result_descriptor['shape'] = job0['result_descriptors'][array_name]['shape']
+                result_descriptor['dtype'] = job0['result_descriptors'][array_name]['dtype']
+
             job_finishes(ae, job_id, 'base')
 
 
         def wait_for_workers(store, decomposed):
             '''Base job only completes once all subjobs are complete.'''
             jobs_ready = False
-            for tstep in range(30):  # Cap the number of checks
+            for tstep in range(100):  # Cap the number of checks
                 all_statuses = []  # store all job and result statuses in this list
                 for job in decomposed['jobs']:
                     try:
@@ -183,6 +194,8 @@ class AnalyticsEngineV2(object):
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
         # Run the base job in a thread so the JRO can be returned directly
         Thread(target=fake_base_worker_thread, args=(self, decomposed, self.dc.driver_manager)).start()
+        time.sleep(5) # !!! Adding a delay here makes things work !!!
+        # fake_base_worker_thread(self, decomposed, self.dc.driver_manager)
         return self._create_jro(decomposed['base'])
 
     def _determine_function_type(self, func):
@@ -219,7 +232,7 @@ class AnalyticsEngineV2(object):
                 raise ValueError('Missing "{}" in job description'.format(field))
         result_ids = []
         for descriptor in job['result_descriptors'].values():
-            result_metadata = ResultMetadata(ResultTypes.S3IO, descriptor)
+            result_metadata = ResultMetadata(ResultTypes.FILE, descriptor)
             result_id = self.store.add_result(result_metadata)
             # Assign id to result descriptor dict (in place)
             descriptor['id'] = result_id
@@ -289,7 +302,7 @@ class AnalyticsEngineV2(object):
         for chunk_id, s in zip(data['chunk_ids'], data['indices']):
             result = {
                 'function_type': FunctionTypes.PICKLED,
-                'function': decomposed_function,
+                'function': function,
                 'data': data,
                 'slice': s,
                 'chunk_id': chunk_id,
@@ -313,12 +326,12 @@ class AnalyticsEngineV2(object):
         descriptors = {}
         for band in bands:
             descriptors[band] = {
-                'type': ResultTypes.S3IO,
+                'type': ResultTypes.FILE,
                 'load_type': LoadType.EAGER,
                 'base_name': None,  # Not yet known
                 'bucket': 'eetest',
                 'shape': None,  # Not yet known
-                'chunk': (2, 2, 2),
+                'chunk': (1, 231, 420),
                 'dtype': None  # Not yet known
             }
         return descriptors
