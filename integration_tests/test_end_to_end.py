@@ -104,7 +104,7 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir, s
     run_click_command(datacube.scripts.cli_app.cli,
                       global_integration_cli_args +
                       ['-v', 'ingest', '-c', str(ls5_pq_albers_ingest_config)])
-    '''
+
     check_open_with_api(driver_manager)
     check_open_with_dc(driver_manager)
     check_open_with_grid_workflow(driver_manager)
@@ -118,7 +118,6 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir, s
     check_analytics_ndvi_mask_median_expression(driver_manager)
     check_analytics_ndvi_mask_median_expression_storage_type(driver_manager)
     check_analytics_pixel_drill(driver_manager)
-    '''
     check_submit_job(store_handler, redis_config, driver_manager)
     check_do_the_math(store_handler, redis_config, driver_manager)
 
