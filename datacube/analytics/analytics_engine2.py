@@ -7,6 +7,7 @@ from __future__ import absolute_import, print_function
 
 import logging
 import time
+import sys
 from threading import Thread
 from uuid import uuid4
 import numpy as np
@@ -56,7 +57,6 @@ class AnalyticsEngineV2(object):
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
 
-
         def job_finishes(ae, job_id, job_type='subjob'):
             '''Set job to completed status.'''
             ae.store.set_job_status(job_id, JobStatuses.COMPLETED)
@@ -102,9 +102,13 @@ class AnalyticsEngineV2(object):
                 s3_key = '_'.join([result_descriptor['base_name'], str(chunk_id)])
                 self.logger.debug('Persisting computed result to %s-%s',
                                   result_descriptor['bucket'], s3_key)
-                data = bytes(array.data)
                 import zstd
                 cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
+                if sys.version_info >= (3, 5):
+                    data = bytes(array.data)
+                else:
+                    data = bytes(np.ascontiguousarray(array).data)
+                pprint(len(data))
                 data = cctx.compress(data)
                 s3io = S3IO(use_s3, None)
                 s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
@@ -155,7 +159,7 @@ class AnalyticsEngineV2(object):
             # Base job waits for workers then finishes
             wait_for_workers(ae.store, decomposed)
 
-            job0 = decomposed['jobs'][0] # get first worker job and copy properties from it to base job
+            job0 = decomposed['jobs'][0]  # get first worker job and copy properties from it to base job
             # TODO: this way of getting base result shape will not work if job data decomposed into smaller chunks
             for array_name, result_descriptor in decomposed['base']['result_descriptors'].items():
                 result_id = result_descriptor['id']
@@ -164,7 +168,6 @@ class AnalyticsEngineV2(object):
                 result_descriptor['dtype'] = job0['result_descriptors'][array_name]['dtype']
 
             job_finishes(ae, job_id, 'base')
-
 
         def wait_for_workers(store, decomposed):
             '''Base job only completes once all subjobs are complete.'''
@@ -194,7 +197,7 @@ class AnalyticsEngineV2(object):
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
         # Run the base job in a thread so the JRO can be returned directly
         Thread(target=fake_base_worker_thread, args=(self, decomposed, self.dc.driver_manager)).start()
-        time.sleep(5) # !!! Adding a delay here makes things work !!!
+        time.sleep(5)  # !!! Adding a delay here makes things work !!!
         # fake_base_worker_thread(self, decomposed, self.dc.driver_manager)
         return self._create_jro(decomposed['base'])
 
@@ -310,15 +313,6 @@ class AnalyticsEngineV2(object):
             }
             results.append(result)
         return results
-
-    def _save_results(self):
-        # == Mock implementation ==
-        s3lio = S3LIO(True, True, None, 30)
-
-        red = np.arange(4 * 4 * 4, dtype=np.uint8).reshape((4, 4, 4))
-        blue = np.arange(4 * 4 * 4, dtype=np.uint8).reshape((4, 4, 4)) + 10
-        s3lio.put_array_in_s3(red, (2, 2, 2), "jro_test_red", 'eetest')
-        s3lio.put_array_in_s3(blue, (2, 2, 2), "jro_test_blue", 'eetest')
 
     def _create_result_descriptors(self, bands):
         '''Create mock result descriptors.'''
