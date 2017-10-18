@@ -86,7 +86,7 @@ class AnalyticsEngineV2(object):
                     return self.dc.load(use_threads=True, **query)
                 else:
                     metadata = self.dc.metadata_for_load(**query)
-                    return self.dc.load_data(metadata['grouped'], metadata['geobox'][chunk],
+                    return self.dc.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
                                              metadata['measurements_values'].values(),
                                              driver_manager=dc.driver_manager, use_threads=True)
 
@@ -108,7 +108,6 @@ class AnalyticsEngineV2(object):
                     data = bytes(array.data)
                 else:
                     data = bytes(np.ascontiguousarray(array).data)
-                pprint(len(data))
                 data = cctx.compress(data)
                 s3io = S3IO(use_s3, None)
                 s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
@@ -285,7 +284,8 @@ class AnalyticsEngineV2(object):
         # == Partial implementation ==
         metadata = self.dc.metadata_for_load(**data)
         storage = self.dc.driver_manager.drivers['s3'].storage
-        _, indices, chunk_ids = storage.create_indices(metadata['geobox'].shape, chunk, '^_^')
+        total_shape = metadata['grouped'].shape + metadata['geobox'].shape
+        _, indices, chunk_ids = storage.create_indices(total_shape, chunk, '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
