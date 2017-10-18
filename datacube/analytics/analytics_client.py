@@ -62,3 +62,15 @@ class AnalyticsClient(object):
         else:
             raise ValueError('Can only return status of Job or Results')
         return status
+
+    def update_jro(self, jro):
+        for dataset in jro.results.datasets:
+            jro_result = jro.results.datasets[dataset]
+            # pylint: disable=protected-access
+            result = self._engine.store.get_result(jro_result._id)
+            # pylint: disable=protected-access
+            self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '
+                              'shape=%s, dtype=%s',
+                              jro_result._id, dataset,
+                              result.descriptor['shape'], result.descriptor['dtype'])
+            # TODO: Update lazy array's shape and dtype

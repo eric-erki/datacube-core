@@ -29,6 +29,7 @@ class AnalyticsEngineV2(object):
         self.dc = Datacube(driver_manager=driver_manager)
         self.logger.debug('Ready')
 
+    # pylint: disable=too-many-locals
     def submit_python_function(self, func, data, ttl=1, chunk=None, *args, **kwargs):
         '''
         user - job submit
@@ -77,6 +78,19 @@ class AnalyticsEngineV2(object):
                               .format(job_id, result_id, job_type,
                                       ae.store.get_result_status(result_id).name))
 
+        def update_result_descriptor(ae, descriptor, shape, dtype):
+            # Update memory object
+            descriptor['shape'] = shape
+            descriptor['dtype'] = dtype
+            # Update store result descriptor
+            result_id = descriptor['id']
+            result = ae.store.get_result(result_id)
+            if not isinstance(result, ResultMetadata):
+                raise ValueError('Worker is trying to update a result list instead of metadata')
+            result.descriptor['shape'] = shape
+            result.descriptor['dtype'] = dtype
+            ae.store.update_result(result_id, result)
+
         def fake_worker_thread(ae, job, base_results, driver_manager=None):
             '''Start the job, save results, then set it as completed.'''
             def _get_data(query, chunk=None, driver_manager=None):
@@ -92,9 +106,6 @@ class AnalyticsEngineV2(object):
 
             def _compute_result(function, array, result_descriptor):
                 computed = function(array)
-                # Update result descriptor based on processed data
-                result_descriptor['shape'] = computed.shape
-                result_descriptor['dtype'] = computed.dtype
                 return computed
 
             def _save_array_in_s3(array, result_descriptor, chunk_id, use_s3=False, driver_manager=None):
@@ -136,6 +147,9 @@ class AnalyticsEngineV2(object):
                 result_starts(ae, job_id, result_id)
                 # Compute and save result
                 computed = _compute_result(job['function'], data[array_name], result_descriptor)
+                # Update result descriptor based on processed data
+                update_result_descriptor(ae, result_descriptor, computed.shape, computed.dtype)
+
                 _save_array_in_s3(computed, base_result_descriptor, job['chunk_id'])
                 # Mark result as completed in store
                 result_finishes(ae, job_id, result_id)
@@ -163,9 +177,9 @@ class AnalyticsEngineV2(object):
             for array_name, result_descriptor in decomposed['base']['result_descriptors'].items():
                 result_id = result_descriptor['id']
                 result_finishes(ae, job_id, result_id, 'base')
-                result_descriptor['shape'] = job0['result_descriptors'][array_name]['shape']
-                result_descriptor['dtype'] = job0['result_descriptors'][array_name]['dtype']
-
+                update_result_descriptor(ae, result_descriptor,
+                                         job0['result_descriptors'][array_name]['shape'],
+                                         job0['result_descriptors'][array_name]['dtype'])
             job_finishes(ae, job_id, 'base')
 
         def wait_for_workers(store, decomposed):
@@ -256,7 +270,7 @@ class AnalyticsEngineV2(object):
 
     def _create_base_job(self, function_type, function, data, ttl, chunk, dependent_jobs):
         '''Prepare the base job.'''
-        descriptors = self._create_result_descriptors(data['measurements'])
+        descriptors = self._create_result_descriptors(data['measurements'], chunk)
         job = {
             'function_type': function_type,
             'function': function,
@@ -273,7 +287,7 @@ class AnalyticsEngineV2(object):
     def _create_jobs(self, function, data, chunk=None):
         '''Decompose data and function into a list of jobs.'''
         job_data = self._decompose_data(data, chunk)
-        jobs = self._decompose_function(function, job_data)
+        jobs = self._decompose_function(function, job_data, chunk)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
@@ -296,7 +310,7 @@ class AnalyticsEngineV2(object):
         decomposed_data['chunk_ids'] = chunk_ids
         return decomposed_data
 
-    def _decompose_function(self, function, data):
+    def _decompose_function(self, function, data, chunk):
         '''Decompose a function and data into a list of jobs.'''
         # == Mock implementation ==
         def decomposed_function(data):
@@ -309,12 +323,12 @@ class AnalyticsEngineV2(object):
                 'data': data,
                 'slice': s,
                 'chunk_id': chunk_id,
-                'result_descriptors': self._create_result_descriptors(data['query']['measurements'])
+                'result_descriptors': self._create_result_descriptors(data['query']['measurements'], chunk)
             }
             results.append(result)
         return results
 
-    def _create_result_descriptors(self, bands):
+    def _create_result_descriptors(self, bands, chunk):
         '''Create mock result descriptors.'''
         # == Mock implementation ==
         descriptors = {}
@@ -325,7 +339,7 @@ class AnalyticsEngineV2(object):
                 'base_name': None,  # Not yet known
                 'bucket': 'eetest',
                 'shape': None,  # Not yet known
-                'chunk': (1, 231, 420),
+                'chunk': chunk,
                 'dtype': None  # Not yet known
             }
         return descriptors

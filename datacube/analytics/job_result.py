@@ -94,6 +94,9 @@ class JobResult(object):
     def results(self):
         return self._results
 
+    def update(self):
+        self.client.update_jro(self)
+
 
 class Job(object):
     """
@@ -240,6 +243,9 @@ class LazyArray(object):
             - chunk cache memory management in case near memory limit
                 - unload least used and stream as required from S3
         """
+        if not self._shape:
+            return None
+
         def dask_array(zipped, shape, chunks, dtype, bucket, use_s3):
 
             dsk = {}

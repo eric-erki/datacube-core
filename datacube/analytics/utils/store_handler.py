@@ -135,6 +135,13 @@ class StoreHandler(object):
                 self._store.rpush(self._make_list_key(key, JobStatuses.QUEUED), item_id)
         return item_id
 
+    def _update_item(self, key, item_id, item):
+        '''Update an item, basically overwriting its existing value with a new one.
+
+        The item id must exist prior.
+        '''
+        self._store.set(self._make_key(key, str(item_id)), dumps(item, byref=True), xx=True)
+
     def _items_with_status(self, key, status):
         '''Returns the list of item ids currently in the queue, as integers.'''
         return [int(item_id) for item_id
@@ -223,6 +230,13 @@ class StoreHandler(object):
             raise ValueError('Invalid result type ({}). It must be ResultMetadata or list of IDs.'
                              .format(type(result)))
         return self._add_item(self.K_RESULTS, result)
+
+    def update_result(self, result_id, result):
+        '''Update a result id in the store.'''
+        if not isinstance(result, (ResultMetadata, list, tuple)):
+            raise ValueError('Invalid result type ({}). It must be ResultMetadata or list of IDs.'
+                             .format(type(result)))
+        return self._update_item(self.K_RESULTS, result_id, result)
 
     def add_job_dependencies(self, job_id, dependent_job_ids=None, dependent_result_ids=None):
         '''Add a job dependencies, a pickled tuple of a list of jobs ids and a list of result ids.
