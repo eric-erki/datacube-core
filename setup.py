@@ -79,7 +79,7 @@ setup(
         'pypeg2',
         'python-dateutil',
         'pyyaml',
-        'rasterio>=0.34',
+        'rasterio>=0.9',  # required for zip reading, 0.9 gets around 1.0a ordering problems
         'singledispatch',
         'sqlalchemy',
         'xarray>=0.9',  # >0.9 fixes most problems with `crs` attributes being lost
@@ -92,7 +92,7 @@ setup(
             'datacube-search = datacube.scripts.search_tool:cli',
             'datacube = datacube.scripts.cli_app:cli',
             'datacube-stacker = datacube_apps.stacker:main',
-            'datacube-worker = datacube_apps.worker:main',
+            'datacube-worker = datacube.execution.worker:main',
             'datacube-fixer = datacube_apps.stacker:fixer_main',
             'datacube-ncml = datacube_apps.ncml:ncml_app',
             'pixeldrill = datacube_apps.pixeldrill:main [interactive]',
