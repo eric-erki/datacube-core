@@ -81,13 +81,19 @@ class AnalyticsEngineV2(object):
         def update_result_descriptor(ae, descriptor, shape, dtype):
             # Update memory object
             descriptor['shape'] = shape
+            if descriptor['chunk'] is None:
+                descriptor['chunk'] = shape
             descriptor['dtype'] = dtype
             # Update store result descriptor
             result_id = descriptor['id']
             result = ae.store.get_result(result_id)
             if not isinstance(result, ResultMetadata):
                 raise ValueError('Worker is trying to update a result list instead of metadata')
+            if result.descriptor['base_name'] is None:
+                result.descriptor['base_name'] = descriptor['base_name']
             result.descriptor['shape'] = shape
+            if result.descriptor['chunk'] is None:
+                result.descriptor['chunk'] = shape
             result.descriptor['dtype'] = dtype
             ae.store.update_result(result_id, result)
 
@@ -178,7 +184,7 @@ class AnalyticsEngineV2(object):
                 result_id = result_descriptor['id']
                 result_finishes(ae, job_id, result_id, 'base')
                 update_result_descriptor(ae, result_descriptor,
-                                         job0['result_descriptors'][array_name]['shape'],
+                                         job0['data']['total_shape'],
                                          job0['result_descriptors'][array_name]['dtype'])
             job_finishes(ae, job_id, 'base')
 
@@ -308,6 +314,7 @@ class AnalyticsEngineV2(object):
         # fails pickling in python 2.7
         decomposed_data['indices'] = indices
         decomposed_data['chunk_ids'] = chunk_ids
+        decomposed_data['total_shape'] = total_shape
         return decomposed_data
 
     def _decompose_function(self, function, data, chunk):

@@ -12,6 +12,7 @@ from __future__ import print_function, absolute_import, division
 
 import io
 import os
+import errno
 import uuid
 import boto3
 import boto3.session
@@ -265,7 +266,11 @@ class S3IO(object):
         else:
             directory = self.file_path+"/"+str(s3_bucket)
             if not os.path.exists(directory):
-                os.makedirs(directory)
+                try:
+                    os.makedirs(directory)
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
             f = open(directory+"/"+str(s3_key), "wb")
             f.write(data)
             f.close()

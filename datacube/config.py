@@ -44,6 +44,10 @@ default_environment: datacube
 redis.host: 127.0.0.1
 redis.port: 6379
 redis.db: 0
+
+redis_celery.host: 127.0.0.1
+redis_celery.port: 6379
+redis_celery.db: 1
 """
 
 
@@ -145,6 +149,15 @@ class LocalConfig(object):
             'port': int(self._environment_prop('redis.port')),
             'db': int(self._environment_prop('redis.db')),
             'password': self._environment_prop('redis.password')
+        }
+
+    @property
+    def redis_celery_config(self):
+        return {
+            'host': self._environment_prop('redis_celery.host'),
+            'port': int(self._environment_prop('redis_celery.port')),
+            'db': int(self._environment_prop('redis_celery.db')),
+            'password': self._environment_prop('redis_celery.password')
         }
 
     @property
