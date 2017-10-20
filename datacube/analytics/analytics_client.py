@@ -68,6 +68,7 @@ class AnalyticsClient(object):
             jro_result = jro.results.datasets[dataset]
             # pylint: disable=protected-access
             result = self._engine.store.get_result(jro_result._id)
+            jro_result.update(result.descriptor)
             # pylint: disable=protected-access
             self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '
                               'shape=%s, dtype=%s',

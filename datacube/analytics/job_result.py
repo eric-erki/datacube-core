@@ -217,6 +217,15 @@ class LazyArray(object):
         elif self._type == ResultTypes.INDEXED:
             self._query = self._array_info['query']
 
+    def update(self, array_info):
+        """Update LazyArray with new information
+        Todo:
+            - update keys in array_info into local variables if required.
+            - make it work for ResultTypes.INDEXED:
+        """
+        self._shape = array_info['shape']
+        self._dtype = array_info['dtype']
+
     def to_dict(self):
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             return {

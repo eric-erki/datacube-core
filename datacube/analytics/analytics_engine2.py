@@ -170,6 +170,7 @@ class AnalyticsEngineV2(object):
             for result_descriptor in decomposed['base']['result_descriptors'].values():
                 result_starts(ae, job_id, result_descriptor['id'], 'base')
 
+            result_starts(ae, job_id, decomposed['base']['result_id'])
             # All subjobs run and complete in the background
             for job in decomposed['jobs']:
                 Thread(target=fake_worker_thread, args=(ae, job, decomposed['base']['result_descriptors'],
@@ -186,6 +187,7 @@ class AnalyticsEngineV2(object):
                 update_result_descriptor(ae, result_descriptor,
                                          job0['data']['total_shape'],
                                          job0['result_descriptors'][array_name]['dtype'])
+            result_finishes(ae, job_id, decomposed['base']['result_id'])
             job_finishes(ae, job_id, 'base')
 
         def wait_for_workers(store, decomposed):
