@@ -111,6 +111,7 @@ def check_submit_job(store_handler, redis_config, driver_manager):
             break
         sleep(0.1)
     assert jro.job.status == JobStatuses.COMPLETED
+    jro.update()
 
     logger.debug('JRO\n{}'.format(jro))
     logger.debug('Store dump\n{}'.format(client._engine.store.str_dump()))
@@ -189,7 +190,7 @@ def check_do_the_math(store_handler, redis_config, driver_manager):
         sleep(0.1)
     assert jro.job.status == JobStatuses.COMPLETED
 
-    print('Before JRO update', jro.results.red[:].shape)
+    print('Before JRO update', jro.results.red['shape'])
     jro.update()
     print('After JRO update', jro.results.red[:].shape)
 

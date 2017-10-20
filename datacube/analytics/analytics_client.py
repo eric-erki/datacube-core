@@ -74,4 +74,3 @@ class AnalyticsClient(object):
                               'shape=%s, dtype=%s',
                               jro_result._id, dataset,
                               result.descriptor['shape'], result.descriptor['dtype'])
-            # TODO: Update lazy array's shape and dtype

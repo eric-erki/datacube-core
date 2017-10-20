@@ -80,10 +80,10 @@ class AnalyticsEngineV2(object):
 
         def update_result_descriptor(ae, descriptor, shape, dtype):
             # Update memory object
-            descriptor['shape'] = shape
-            if descriptor['chunk'] is None:
-                descriptor['chunk'] = shape
-            descriptor['dtype'] = dtype
+            #descriptor['shape'] = shape
+            #if descriptor['chunk'] is None:
+            #    descriptor['chunk'] = shape
+            #descriptor['dtype'] = dtype
             # Update store result descriptor
             result_id = descriptor['id']
             result = ae.store.get_result(result_id)
@@ -184,9 +184,14 @@ class AnalyticsEngineV2(object):
             for array_name, result_descriptor in decomposed['base']['result_descriptors'].items():
                 result_id = result_descriptor['id']
                 result_finishes(ae, job_id, result_id, 'base')
+
+                # Use the dtype from the first sub-job as dtype for the base result, for that aray_name
+                sub_result_id = job0['result_descriptors'][array_name]['id']
+                dtype = ae.store.get_result(sub_result_id).descriptor['dtype']
+
                 update_result_descriptor(ae, result_descriptor,
                                          job0['data']['total_shape'],
-                                         job0['result_descriptors'][array_name]['dtype'])
+                                         dtype)
             result_finishes(ae, job_id, decomposed['base']['result_id'])
             job_finishes(ae, job_id, 'base')
 
