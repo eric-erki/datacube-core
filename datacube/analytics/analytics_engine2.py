@@ -52,14 +52,29 @@ class AnalyticsEngineV2(object):
              - job/result
                - status
         '''
-        def job_starts(ae, job_id, job_type='subjob'):
+        def job_starts(ae, job, job_type='subjob'):
             '''Set job to running status.'''
+            job_id = job['id']
+            # Start job
             ae.store.set_job_status(job_id, JobStatuses.RUNNING)
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
 
-        def job_finishes(ae, job_id, job_type='subjob'):
+            # Start combined result
+            result_starts(ae, job_id, job['result_id'], job_type)
+            # Start individual results
+            for descriptor in job['result_descriptors'].values():
+                result_starts(ae, job_id, descriptor['id'], job_type)
+
+        def job_finishes(ae, job, job_type='subjob'):
             '''Set job to completed status.'''
+            job_id = job['id']
+            # Stop individual results
+            for descriptor in job['result_descriptors'].values():
+                result_finishes(ae, job_id, descriptor['id'], job_type)
+            # Stop combined result
+            result_finishes(ae, job_id, job['result_id'], job_type)
+            # Stop job
             ae.store.set_job_status(job_id, JobStatuses.COMPLETED)
             self.logger.debug('Job {:03d} ({}) is now {}'
                               .format(job_id, job_type, ae.store.get_job_status(job_id).name))
@@ -110,9 +125,8 @@ class AnalyticsEngineV2(object):
                                              metadata['measurements_values'].values(),
                                              driver_manager=dc.driver_manager, use_threads=True)
 
-            def _compute_result(function, array, result_descriptor):
-                computed = function(array)
-                return computed
+            def _compute_result(function, data):
+                return function(data)
 
             def _save_array_in_s3(array, result_descriptor, chunk_id, use_s3=False, driver_manager=None):
                 '''Saves a single xarray.DataArray object to s3/s3-file storage'''
@@ -129,8 +143,7 @@ class AnalyticsEngineV2(object):
                 s3io = S3IO(use_s3, None)
                 s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
 
-            job_id = job['id']
-            job_starts(ae, job_id)
+            job_starts(ae, job)
 
             # Get data for worker here
             data = _get_data(job['data']['query'], job['slice'])
@@ -139,6 +152,7 @@ class AnalyticsEngineV2(object):
                     set(data.data_vars), set(job['result_descriptors'].keys())))
 
             # Execute function here
+            computed = _compute_result(job['function'], data)
 
             # Save results here
             # map input to output
@@ -146,54 +160,40 @@ class AnalyticsEngineV2(object):
             #       - storage parameters
             #       - naming parameters
             #       - unique key name
-            for array_name, result_descriptor in job['result_descriptors'].items():
+            for array_name, descriptor in job['result_descriptors'].items():
                 base_result_descriptor = base_results[array_name]
-                result_id = result_descriptor['id']
-                # Mark result as running in store
-                result_starts(ae, job_id, result_id)
-                # Compute and save result
-                computed = _compute_result(job['function'], data[array_name], result_descriptor)
+                array = computed[array_name]
                 # Update result descriptor based on processed data
-                update_result_descriptor(ae, result_descriptor, computed.shape, computed.dtype)
-
-                _save_array_in_s3(computed, base_result_descriptor, job['chunk_id'])
-                # Mark result as completed in store
-                result_finishes(ae, job_id, result_id)
-            job_finishes(ae, job_id)
+                update_result_descriptor(ae, descriptor, array.shape, array.dtype)
+                _save_array_in_s3(array, base_result_descriptor, job['chunk_id'])
+            job_finishes(ae, job)
 
         def fake_base_worker_thread(ae, decomposed, driver_manager=None):
             '''Start and track the subjobs.'''
 
             # Base job starts
-            job_id = decomposed['base']['id']
-            job_starts(ae, job_id, 'base')
-            for result_descriptor in decomposed['base']['result_descriptors'].values():
-                result_starts(ae, job_id, result_descriptor['id'], 'base')
+            base_job = decomposed['base']
+            job_starts(ae, base_job, 'base')
 
-            result_starts(ae, job_id, decomposed['base']['result_id'])
             # All subjobs run and complete in the background
             for job in decomposed['jobs']:
                 Thread(target=fake_worker_thread, args=(ae, job, decomposed['base']['result_descriptors'],
                                                         driver_manager)).start()
 
+            print('#'*30, ae.store.str_dump())
             # Base job waits for workers then finishes
             wait_for_workers(ae.store, decomposed)
 
             job0 = decomposed['jobs'][0]  # get first worker job and copy properties from it to base job
             # TODO: this way of getting base result shape will not work if job data decomposed into smaller chunks
             for array_name, result_descriptor in decomposed['base']['result_descriptors'].items():
-                result_id = result_descriptor['id']
-                result_finishes(ae, job_id, result_id, 'base')
-
                 # Use the dtype from the first sub-job as dtype for the base result, for that aray_name
                 sub_result_id = job0['result_descriptors'][array_name]['id']
                 dtype = ae.store.get_result(sub_result_id).descriptor['dtype']
-
                 update_result_descriptor(ae, result_descriptor,
                                          job0['data']['total_shape'],
                                          dtype)
-            result_finishes(ae, job_id, decomposed['base']['result_id'])
-            job_finishes(ae, job_id, 'base')
+            job_finishes(ae, base_job, 'base')
 
         def wait_for_workers(store, decomposed):
             '''Base job only completes once all subjobs are complete.'''
