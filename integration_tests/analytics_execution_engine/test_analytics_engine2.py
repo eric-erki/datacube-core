@@ -103,7 +103,8 @@ def check_submit_job(store_handler, redis_config, driver_manager):
         'y': (-35.32, -35.28)
     }
     client = AnalyticsClient(redis_config, driver_manager=driver_manager)
-    jro = client.submit_python_function(base_function, data, chunk=(1, 231, 420))
+    jro = client.submit_python_function(base_function, data,
+                                        storage_params={'chunk': (1, 231, 420)})
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -181,7 +182,8 @@ def check_do_the_math(store_handler, redis_config, driver_manager):
         'y': (-35.32, -35.28)
     }
     client = AnalyticsClient(redis_config, driver_manager=driver_manager)
-    jro = client.submit_python_function(band_transform, data_desc, chunk=(1, 231, 420))
+    jro = client.submit_python_function(band_transform, data_desc,
+                                        storage_params={'chunk': (1, 231, 420)})
 
     # Wait a while for the main job to complete
     for tstep in range(30):

@@ -225,6 +225,7 @@ class LazyArray(object):
         """
         self._shape = array_info['shape']
         self._dtype = array_info['dtype']
+        self._chunk = array_info['chunk']
 
     def to_dict(self):
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:

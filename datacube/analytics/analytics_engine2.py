@@ -11,7 +11,7 @@ import sys
 from threading import Thread
 from uuid import uuid4
 import numpy as np
-from pprint import pformat, pprint
+from pprint import pformat
 from six.moves import zip
 
 from datacube import Datacube
@@ -23,6 +23,11 @@ from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 class AnalyticsEngineV2(object):
 
+    DEFAULT_STORAGE = {
+        'chunk': None,
+        'ttl': -1
+    }
+
     def __init__(self, store_config, driver_manager=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.store = StoreHandler(**store_config)
@@ -30,7 +35,7 @@ class AnalyticsEngineV2(object):
         self.logger.debug('Ready')
 
     # pylint: disable=too-many-locals
-    def submit_python_function(self, func, data, ttl=1, chunk=None, *args, **kwargs):
+    def submit_python_function(self, func, data, storage_params=None, *args, **kwargs):
         '''
         user - job submit
         AE - gets the job
@@ -180,7 +185,6 @@ class AnalyticsEngineV2(object):
                 Thread(target=fake_worker_thread, args=(ae, job, decomposed['base']['result_descriptors'],
                                                         driver_manager)).start()
 
-            print('#'*30, ae.store.str_dump())
             # Base job waits for workers then finishes
             wait_for_workers(ae.store, decomposed)
 
@@ -218,8 +222,11 @@ class AnalyticsEngineV2(object):
             if not jobs_ready:
                 raise RuntimeError('Some subjobs did not complete')
 
+        storage = self.DEFAULT_STORAGE.copy()
+        if storage_params:
+            storage.update(storage_params)
         function_type = self._determine_function_type(func)
-        decomposed = self._decompose(function_type, func, data, ttl, chunk)
+        decomposed = self._decompose(function_type, func, data, storage)
         self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
         # Run the base job in a thread so the JRO can be returned directly
         Thread(target=fake_base_worker_thread, args=(self, decomposed, self.dc.driver_manager)).start()
@@ -233,7 +240,7 @@ class AnalyticsEngineV2(object):
         # code)
         return FunctionTypes.PICKLED
 
-    def _decompose(self, function_type, function, data, ttl=1, chunk=None):
+    def _decompose(self, function_type, function, data, storage_params):
         '''Decompose the function and data.
 
         The decomposition of function over data creates one or more jobs. Each job has its own
@@ -243,8 +250,8 @@ class AnalyticsEngineV2(object):
         '''
         # == Mock implementation ==
         # Prepare the sub-jobs and base job info
-        jobs = self._create_jobs(function, data, chunk)
-        base = self._create_base_job(function_type, function, data, ttl, chunk, jobs)
+        jobs = self._create_jobs(function, data, storage_params)
+        base = self._create_base_job(function_type, function, data, storage_params, jobs)
         return {
             'base': base,
             'jobs': jobs
@@ -265,8 +272,6 @@ class AnalyticsEngineV2(object):
             result_id = self.store.add_result(result_metadata)
             # Assign id to result descriptor dict (in place)
             descriptor['id'] = result_id
-            # TODO: Do we want to add the band name or chunk id in the base name? It is not
-            # necessary as the result_id is unique already
             descriptor['base_name'] = 'result_{:07d}'.format(result_id)
             result_ids.append(result_id)
         result_id = self.store.add_result(result_ids)
@@ -281,15 +286,15 @@ class AnalyticsEngineV2(object):
             'result_id': result_id,
         })
 
-    def _create_base_job(self, function_type, function, data, ttl, chunk, dependent_jobs):
+    def _create_base_job(self, function_type, function, data, storage_params, dependent_jobs):
         '''Prepare the base job.'''
-        descriptors = self._create_result_descriptors(data['measurements'], chunk)
+        descriptors = self._create_result_descriptors(data['measurements'], storage_params['chunk'])
         job = {
             'function_type': function_type,
             'function': function,
             'data': data,
-            'ttl': ttl,
-            'chunk': chunk,
+            'ttl': storage_params['ttl'],
+            'chunk': storage_params['chunk'],
             'result_descriptors': descriptors
         }
         dependent_job_ids = [dep_job['id'] for dep_job in dependent_jobs]
@@ -297,22 +302,23 @@ class AnalyticsEngineV2(object):
         self._store_job(job, dependent_job_ids)
         return job
 
-    def _create_jobs(self, function, data, chunk=None):
+    def _create_jobs(self, function, data, storage_params):
         '''Decompose data and function into a list of jobs.'''
-        job_data = self._decompose_data(data, chunk)
-        jobs = self._decompose_function(function, job_data, chunk)
+        job_data = self._decompose_data(data, storage_params)
+        jobs = self._decompose_function(function, job_data, storage_params)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
         return jobs
 
-    def _decompose_data(self, data, chunk):
+    def _decompose_data(self, data, storage_params):
         '''Decompose data into a list of chunks.'''
         # == Partial implementation ==
+        # TODO: Add a loop: for dataset in datasets...
         metadata = self.dc.metadata_for_load(**data)
         storage = self.dc.driver_manager.drivers['s3'].storage
         total_shape = metadata['grouped'].shape + metadata['geobox'].shape
-        _, indices, chunk_ids = storage.create_indices(total_shape, chunk, '^_^')
+        _, indices, chunk_ids = storage.create_indices(total_shape, storage_params['chunk'], '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
@@ -324,23 +330,24 @@ class AnalyticsEngineV2(object):
         decomposed_data['total_shape'] = total_shape
         return decomposed_data
 
-    def _decompose_function(self, function, data, chunk):
+    def _decompose_function(self, function, data, storage_params):
         '''Decompose a function and data into a list of jobs.'''
         # == Mock implementation ==
         def decomposed_function(data):
             return data
-        results = []
+        sub_jobs = []
         for chunk_id, s in zip(data['chunk_ids'], data['indices']):
-            result = {
+            job = {
                 'function_type': FunctionTypes.PICKLED,
                 'function': function,
                 'data': data,
                 'slice': s,
                 'chunk_id': chunk_id,
-                'result_descriptors': self._create_result_descriptors(data['query']['measurements'], chunk)
+                'result_descriptors': self._create_result_descriptors(data['query']['measurements'],
+                                                                      storage_params['chunk'])
             }
-            results.append(result)
-        return results
+            sub_jobs.append(job)
+        return sub_jobs
 
     def _create_result_descriptors(self, bands, chunk):
         '''Create mock result descriptors.'''

@@ -37,18 +37,19 @@ class AnalyticsClient(object):
         self._engine = AnalyticsEngineV2(store_config, driver_manager=driver_manager)
         self.logger.debug('Ready')
 
-    def submit_python_function(self, function, data, ttl=1, chunk=None, *args, **kwargs):
+    def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
         '''Submit a python function and data to the engine.
 
         :param function function: Python function to be executed by the engine.
         :param dict data: Dataset descriptor.
-        :param int ttl: Life span of the results.
-        :param slice chunk: Preferred result chunking.
+        :param dict storage_params: Storage parameters, e.g. `{'chunk': (...), 'ttl': -1}` where
+          `ttl` is the life span of the results and `chunk` the preferred result chunking.
         :param list args: Optional positional arguments for the function.
         :param dict kargs: Optional keyword arguments for the funtion.
         :return: A :class:`JobResult` object.
+
         '''
-        jro = self._engine.submit_python_function(function, data, ttl, chunk, *args, **kwargs)
+        jro = self._engine.submit_python_function(function, data, storage_params, *args, **kwargs)
         jro.client = self
         return jro
 
