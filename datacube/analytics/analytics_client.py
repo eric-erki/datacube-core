@@ -9,11 +9,39 @@ from threading import Thread
 from uuid import uuid4
 import numpy as np
 from pprint import pformat
+from celery import Celery
 
 from .analytics_engine2 import AnalyticsEngineV2
 from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
 from datacube.analytics.job_result import JobResult, Job, Results, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
+from datacube.config import LocalConfig
+
+
+def celery_app(store_config=None):
+
+    if store_config is None:
+        local_config = LocalConfig.find()
+        store_config = local_config.redis_celery_config
+
+    if 'password' in store_config:
+        url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
+    else:
+        url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
+                                            store_config['port'], store_config['db'])
+
+    _app = Celery('ee_task', broker=url, backend=url)
+
+    _app.conf.update(
+        task_serializer='pickle',
+        result_serializer='pickle',
+        accept_content=['pickle'])
+
+    return _app
+
+
+# pylint: disable=invalid-name
+app = celery_app()
 
 
 class AnalyticsClient(object):
@@ -52,6 +80,12 @@ class AnalyticsClient(object):
         jro = self._engine.submit_python_function(function, data, storage_params, *args, **kwargs)
         jro.client = self
         return jro
+
+    def submit_python_function_base(self, func, data, storage_params=None, *args, **kwargs):
+        from cloudpickle import dumps
+        func = dumps(func)
+        return app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
+                             args=(func, data, storage_params), kwargs=kwargs)
 
     def get_status(self, item):
         '''Return the status of a job or result.'''
