@@ -11,7 +11,7 @@ import numpy as np
 from pprint import pformat
 from celery import Celery
 
-from .analytics_engine2 import AnalyticsEngineV2
+from .decomposer import AnalyticsEngineV2
 from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
 from datacube.analytics.job_result import JobResult, Job, Results, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
@@ -77,7 +77,7 @@ class AnalyticsClient(object):
         :return: A :class:`JobResult` object.
 
         '''
-        jro = self._engine.submit_python_function(function, data, storage_params, *args, **kwargs)
+        jro = self._engine.analyse(function, data, storage_params, *args, **kwargs)[1]
         jro.client = self
         return jro
 

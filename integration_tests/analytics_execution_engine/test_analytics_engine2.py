@@ -11,7 +11,7 @@ import pytest
 
 import datacube.analytics.job_result
 from datacube.analytics.utils.store_handler import *
-from datacube.analytics.analytics_engine2 import AnalyticsEngineV2
+from datacube.analytics.decomposer import AnalyticsEngineV2
 from datacube.analytics.analytics_client import AnalyticsClient
 
 import logging
@@ -66,11 +66,11 @@ def test_submit_invalid_job(store_handler, redis_config, driver_manager):
 
     # submit bad data that is not a dictionary
     with pytest.raises(TypeError):
-        engine.submit_python_function(lambda x: x, [1, 2, 3, 4])
+        engine.analyse(lambda x: x, [1, 2, 3, 4])
 
     # submit bad data that is a dict but does not have any measurements
     with pytest.raises(LookupError):
-        engine.submit_python_function(lambda x: x, {'a': 1, 'b': 2})
+        engine.analyse(lambda x: x, {'a': 1, 'b': 2})
 
     store_handler._store.flushdb()
 
