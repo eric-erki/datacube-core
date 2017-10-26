@@ -70,8 +70,7 @@ script:
   # Ensure we are running against the correct python version
   - '[[ $(python --version 2>&1) == *"$TRAVIS_PYTHON_VERSION"* ]]'
   - conda clean --all --yes
-  #- ./check-code.sh integration_tests
-  - pytest -s -r sx integration_tests/test_end_to_end.py
+  - ./check-code.sh integration_tests
   # Take extra steps to minimise disk space. We have run out a few times.
   - conda clean --all --yes
 
