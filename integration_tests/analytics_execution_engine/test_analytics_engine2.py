@@ -98,7 +98,7 @@ def celery_app(local_config):
         accept_content=['pickle'])
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def ee_celery(local_config, request):
     store_config = local_config.redis_celery_config
     yield launch_ae_worker(store_config)
