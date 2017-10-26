@@ -15,6 +15,8 @@ from datacube.analytics.utils.store_handler import *
 from datacube.analytics.decomposer import AnalyticsEngineV2
 from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
 from datacube.analytics.analytics_client import AnalyticsClient
+from datacube.analytics.job_result import JobResult
+
 
 import logging
 
@@ -59,6 +61,7 @@ def user_data():
     return users
 
 
+@pytest.mark.skip(reason="needs migration to celery")
 def test_submit_invalid_job(store_handler, redis_config, driver_manager):
     '''
     Test for failure of job submission when passing insufficient data or wrong type
@@ -98,12 +101,9 @@ def celery_app(local_config):
 @pytest.fixture(scope='module')
 def ee_celery(local_config, request):
     store_config = local_config.redis_celery_config
-    launch_ae_worker(store_config)
-
-    def finish():
-        print("teardown celery")
-        stop_worker()
-    request.addfinalizer(finish)
+    yield launch_ae_worker(store_config)
+    print('Teardown celery')
+    stop_worker()
 
 
 def check_submit_job_celery(store_handler, redis_config, local_config, driver_manager):
@@ -122,14 +122,24 @@ def check_submit_job_celery(store_handler, redis_config, local_config, driver_ma
     }
     client = AnalyticsClient(redis_config, ee_store_config=local_config.redis_celery_config,
                              driver_manager=driver_manager)
-    jro = client.submit_python_function_base(base_function, data,
-                                             storage_params={'chunk': (1, 231, 420)},
-                                             config={'redis_celery': local_config.redis_celery_config,
-                                                     'redis': local_config.redis_config,
-                                                     'datacube': local_config.datacube_config})
-    result = jro.get(disable_sync_subtasks=False)[0].get(disable_sync_subtasks=False)
-    assert result.red.shape == (1, 231, 420)
-    assert result.blue.shape == (1, 231, 420)
+    # Analysis promise
+    analysis_p = client.submit_python_function_base(base_function, data,
+                                                    storage_params={'chunk': (1, 231, 420)},
+                                                    config={'redis_celery': local_config.redis_celery_config,
+                                                            'redis': redis_config,
+                                                            'datacube': local_config.datacube_config})
+    analysis = analysis_p.get(disable_sync_subtasks=False)
+    jro = analysis[0]
+    # TODO: Fix this once a proper JRO is returned
+    assert jro == 'JRO'
+
+    for result_p in analysis[1]:
+        result = result_p.get(disable_sync_subtasks=False)
+        assert result.red.shape == (1, 231, 420)
+        assert result.blue.shape == (1, 231, 420)
+    # Leave time to fake workers to complete their tasks then flush the store
+    sleep(0.4)
+    store_handler._store.flushdb()
 
 
 def check_submit_job(store_handler, redis_config, driver_manager):

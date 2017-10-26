@@ -5,15 +5,31 @@ from __future__ import absolute_import, print_function
 
 import logging
 
-from .utils.store_handler import JobStatuses, ResultMetadata
+from datacube.drivers.manager import DriverManager
+from datacube import Datacube
+from .utils.store_handler import StoreHandler, JobStatuses, ResultMetadata
 
 class Worker(object):
-    def __init__(self, store, driver_manager, job):
-        self._driver_manager = driver_manager
-        self._store = store
-        self._job = job
-        self._job_id = self._job['id']
+    def __init__(self, store_config, driver_manager_config, job=None):
+        self._driver_manager_config = driver_manager_config
+        self._driver_manager = DriverManager(local_config=driver_manager_config)
+        self._store_config = store_config
+        self._store = StoreHandler(**store_config)
+        self._datacube = Datacube(driver_manager=self._driver_manager)
+        self._job = None  # To please pylint
+        self._job_id = None  # To please pylint
+        self.job = job
         self.logger = logging.getLogger('{}#{}'.format(self.__class__.__name__, self._job_id))
+
+    @property
+    def job(self):
+        return self._job
+
+    @job.setter
+    def job(self, job):
+        self._job = job
+        self._job_id = self._job['id'] if job else None
+
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object

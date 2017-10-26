@@ -119,8 +119,9 @@ def test_end_to_end(global_integration_cli_args, driver_manager, testdata_dir, s
     check_analytics_ndvi_mask_median_expression(driver_manager)
     check_analytics_ndvi_mask_median_expression_storage_type(driver_manager)
     check_analytics_pixel_drill(driver_manager)
-    check_submit_job(store_handler, redis_config, driver_manager)
-    check_do_the_math(store_handler, redis_config, driver_manager)
+    # TODO: Convert the next two to celery (in test_analytics_engine2)
+    # check_submit_job(store_handler, redis_config, driver_manager)
+    # check_do_the_math(store_handler, redis_config, driver_manager)
     check_submit_job_celery(store_handler, redis_config, local_config, driver_manager)
 
 

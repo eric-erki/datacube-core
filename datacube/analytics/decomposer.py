@@ -5,26 +5,30 @@ import time
 from pprint import pformat
 from six.moves import zip
 
-from datacube import Datacube
-from .base_worker import BaseWorker
-from .utils.store_handler import FunctionTypes, ResultTypes, ResultMetadata, StoreHandler
+from .worker import Worker
+from .base_monitor import BaseMonitor
+from .utils.store_handler import FunctionTypes, ResultTypes, ResultMetadata
 from datacube.analytics.job_result import JobResult, LoadType
 
 
-class AnalyticsEngineV2(object):
+class AnalyticsEngineV2(Worker):
     DEFAULT_STORAGE = {
         'chunk': None,
         'ttl': -1
     }
 
-    def __init__(self, store_config, driver_manager=None):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.store = StoreHandler(**store_config)
-        self.driver_manager = driver_manager
-        self.dc = Datacube(driver_manager=driver_manager)
-        self.logger.debug('Ready')
+    def __init__(self, store_config, driver_manager_config,
+                 function, data, storage_params=None, *args, **kwargs):
+        super(AnalyticsEngineV2, self).__init__(store_config, driver_manager_config)
+        storage = self.DEFAULT_STORAGE.copy()
+        if storage_params:
+            storage.update(storage_params)
+        function_type = self._determine_function_type(function)
+        self.decomposed = self._decompose(function_type, function, data, storage)
+        self.job = self.decomposed['base']
+        self.logger.debug('Decomposed\n%s', pformat(self.decomposed, indent=4))
 
-    def analyse(self, function, data, storage_params=None, *args, **kwargs):
+    def analyse(self):
         '''user - job submit
         AE - gets the job
            - job decomposition
@@ -45,28 +49,18 @@ class AnalyticsEngineV2(object):
              - job/result
                - status
         '''
-
-        storage = self.DEFAULT_STORAGE.copy()
-        if storage_params:
-            storage.update(storage_params)
-        function_type = self._determine_function_type(function)
-        decomposed = self._decompose(function_type, function, data, storage)
-        self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
-
         # Run the base job
-        base_worker = BaseWorker(self.store, self.driver_manager, decomposed)
-        base_worker.job_starts()
-
-        # TODO: remove this method once moved to celery
-        base_worker.run_subjobs()
+        self.job_starts()
 
         # Create a thread to monitor job completion, until it gets implemented in the coming months.
-        base_worker.monitor_completion()
+        base_monitor = BaseMonitor(self, self._store, self._driver_manager, self.decomposed)
+        base_monitor.monitor_completion()
 
-        # TODO: Fix this !!! Adding a delay here makes things work !!!
-        #time.sleep(5)
+        # TODO: remove this method once moved to celery
+        #base_monitor.run_subjobs()
 
-        return (decomposed['jobs'], self._create_jro(decomposed['base']))
+        return (self.decomposed['jobs'], self._create_jro(self.decomposed['base']),
+                self.decomposed['base']['result_descriptors'])
 
     def _determine_function_type(self, func):
         '''Determine the type of a function.'''
@@ -103,18 +97,18 @@ class AnalyticsEngineV2(object):
         result_ids = []
         for descriptor in job['result_descriptors'].values():
             result_metadata = ResultMetadata(ResultTypes.FILE, descriptor)
-            result_id = self.store.add_result(result_metadata)
+            result_id = self._store.add_result(result_metadata)
             # Assign id to result descriptor dict (in place)
             descriptor['id'] = result_id
             descriptor['base_name'] = 'result_{:07d}'.format(result_id)
             result_ids.append(result_id)
-        result_id = self.store.add_result(result_ids)
-        job_id = self.store.add_job(job['function_type'],
-                                    job['function'],
-                                    job['data'],
-                                    result_id)
+        result_id = self._store.add_result(result_ids)
+        job_id = self._store.add_job(job['function_type'],
+                                     job['function'],
+                                     job['data'],
+                                     result_id)
         # Add dependencies
-        self.store.add_job_dependencies(job_id, dependent_job_ids, dependent_result_ids)
+        self._store.add_job_dependencies(job_id, dependent_job_ids, dependent_result_ids)
         job.update({
             'id': job_id,
             'result_id': result_id,
@@ -149,8 +143,8 @@ class AnalyticsEngineV2(object):
         '''Decompose data into a list of chunks.'''
         # == Partial implementation ==
         # TODO: Add a loop: for dataset in datasets...
-        metadata = self.dc.metadata_for_load(**data)
-        storage = self.dc.driver_manager.drivers['s3'].storage
+        metadata = self._datacube.metadata_for_load(**data)
+        storage = self._driver_manager.drivers['s3'].storage
         total_shape = metadata['grouped'].shape + metadata['geobox'].shape
         _, indices, chunk_ids = storage.create_indices(total_shape, storage_params['chunk'], '^_^')
         from copy import deepcopy

@@ -8,7 +8,7 @@ from __future__ import absolute_import, print_function
 import sys
 import numpy as np
 import zstd
-
+from cloudpickle import loads
 
 from datacube.analytics.worker import Worker
 from datacube.analytics.utils.store_handler import ResultMetadata
@@ -30,7 +30,9 @@ class ExecutionEngineV2(Worker):
 
     def _compute_result(self, function, data):
         '''Run the function on the data.'''
-        return function(data)
+        # TODO: restore function according to its type
+        func = loads(function)
+        return func(data)
 
     def _save_array_in_s3(self, array, result_descriptor, chunk_id, use_s3=False):
         '''Saves a single xarray.DataArray object to s3/s3-file storage'''
@@ -57,7 +59,7 @@ class ExecutionEngineV2(Worker):
                 set(data.data_vars), set(self._job['result_descriptors'].keys())))
 
         # Execute function here
-        computed = self._compute_result(self._job['function'], data)
+        computed = self._compute_result(self.job['function'], data)
 
         # Save results here
         # map input to output
@@ -72,3 +74,5 @@ class ExecutionEngineV2(Worker):
             self.update_result_descriptor(descriptor, array.shape, array.dtype)
             self._save_array_in_s3(array, base_result_descriptor, self._job['chunk_id'])
         self.job_finishes()
+
+        return computed

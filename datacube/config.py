@@ -43,11 +43,11 @@ default_environment: datacube
 # Inherit all defaults.
 redis.host: 127.0.0.1
 redis.port: 6379
-redis.db: 0
+redis.db: 1
 
 redis_celery.host: 127.0.0.1
 redis_celery.port: 6379
-redis_celery.db: 1
+redis_celery.db: 2
 """
 
 

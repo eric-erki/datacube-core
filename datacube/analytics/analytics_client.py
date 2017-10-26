@@ -61,8 +61,11 @@ class AnalyticsClient(object):
         .. todo:: The final implementation should NOT have a store_config but instead a
         configuration allowing to send tasks to a remote engine.
         '''
+        self.store_config = store_config
+        self.driver_manager = driver_manager
+        self._engine = None
+        self._store = StoreHandler(**store_config)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._engine = AnalyticsEngineV2(store_config, driver_manager=driver_manager)
         self.logger.debug('Ready')
 
         if ee_store_config is not None:
@@ -88,13 +91,16 @@ class AnalyticsClient(object):
         :return: A :class:`JobResult` object.
 
         '''
+        # pylint: disable=too-many-function-args
+        self._engine = AnalyticsEngineV2(self.store_config, self.driver_manager,
+                                         function, data, storage_params, config, *args, **kwargs)
         jro = self._engine.analyse(function, data, storage_params, config, *args, **kwargs)[1]
         jro.client = self
         return jro
 
-    def submit_python_function_base(self, func, data, storage_params=None, config=None, *args, **kwargs):
+    def submit_python_function_base(self, function, data, storage_params=None, config=None, *args, **kwargs):
         from cloudpickle import dumps
-        func = dumps(func)
+        func = dumps(function)
         return app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
                              args=(func, data, storage_params, config), kwargs=kwargs)
 
@@ -102,9 +108,9 @@ class AnalyticsClient(object):
         '''Return the status of a job or result.'''
         status = None
         if isinstance(item, Job):
-            status = self._engine.store.get_job_status(item.id)
+            status = self._store.get_job_status(item.id)
         elif isinstance(item, Results):
-            status = self._engine.store.get_result_status(item.id)
+            status = self._store.get_result_status(item.id)
         else:
             raise ValueError('Can only return status of Job or Results')
         return status
@@ -113,7 +119,7 @@ class AnalyticsClient(object):
         for dataset in jro.results.datasets:
             jro_result = jro.results.datasets[dataset]
             # pylint: disable=protected-access
-            result = self._engine.store.get_result(jro_result._id)
+            result = self._store.get_result(jro_result._id)
             jro_result.update(result.descriptor)
             # pylint: disable=protected-access
             self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '

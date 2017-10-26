@@ -1,16 +1,19 @@
 from __future__ import absolute_import, print_function
 
 from time import sleep
-from pprint import pformat
 from threading import Thread
 
 from .worker import Worker
 from .utils.store_handler import JobStatuses
 
-class BaseWorker(Worker):
-    def __init__(self, store, driver_manager, decomposed):
+class BaseMonitor(object):
+    '''A temporary class monitoring the completion of a job.'''
+
+    def __init__(self, worker, store, driver_manager, decomposed):
+        self._worker = worker
+        self._store = store
+        self._driver_manager = driver_manager
         self._decomposed = decomposed
-        super(BaseWorker, self).__init__(store, driver_manager, decomposed['base'])
 
     def wait_for_workers(self):
         '''Base job only completes once all subjobs are complete.'''
@@ -51,14 +54,14 @@ class BaseWorker(Worker):
         job0 = self._decomposed['jobs'][0]
         # TODO: this way of getting base result shape will not work if job data decomposed into
         # smaller chunks
-        for array_name, result_descriptor in self._job['result_descriptors'].items():
+        for array_name, result_descriptor in self._worker.job['result_descriptors'].items():
             # Use the dtype from the first sub-job as dtype for the base result, for that aray_name
             sub_result_id = job0['result_descriptors'][array_name]['id']
             dtype = self._store.get_result(sub_result_id).descriptor['dtype']
-            self.update_result_descriptor(result_descriptor,
-                                          job0['data']['total_shape'],
-                                          dtype)
-        self.job_finishes()
+            self._worker.update_result_descriptor(result_descriptor,
+                                                  job0['data']['total_shape'],
+                                                  dtype)
+        self._worker.job_finishes()
 
     # TODO: remove this method once moved to celery
     def run_subjobs(self):
@@ -69,5 +72,5 @@ class BaseWorker(Worker):
     # TODO: remove this method once moved to celery
     def run_subjobs_thread(self, subjob):
         from datacube.execution.execution_engine2 import ExecutionEngineV2
-        execution_engine = ExecutionEngineV2(self._store, self._driver_manager, subjob)
-        execution_engine.execute(self._job['result_descriptors'])
+        execution_engine = ExecutionEngineV2(self._store_config, self._manager, subjob)
+        execution_engine.execute(self._worker.job['result_descriptors'])
