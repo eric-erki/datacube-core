@@ -177,7 +177,7 @@ def write_xarray_to_image(filename, dataset, dtype='uint16'):
     img[..., mask] = 1.0
     img[..., nmask] = 1.0
 
-    img *= 2 ** 16
+    img *= 2 ** 16 - 1
 
     profile = {
         'driver': 'PNG',
