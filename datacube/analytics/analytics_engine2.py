@@ -67,7 +67,7 @@ def launch_worker_thread(url):
     app.worker_main(argv)
 
 def stop_worker():
-    app.control.shutdown()
+    app.control.shutdown(timeout=20)
 
 @app.task
 def run_python_function_base(function, data, storage_params=None, config=None, *args, **kwargs):
