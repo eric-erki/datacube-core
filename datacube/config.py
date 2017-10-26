@@ -143,6 +143,18 @@ class LocalConfig(object):
         )
 
     @property
+    def datacube_config(self):
+        return {
+            'db_hostname': self.db_hostname,
+            'db_database': self.db_database,
+            'db_username': self.db_username,
+            'db_password': self.db_password,
+            'db_port': self.db_port,
+            'db_connection_timeout': self.db_connection_timeout,
+            'default_driver': self.default_driver
+        }
+
+    @property
     def redis_config(self):
         return {
             'host': self._environment_prop('redis.host'),

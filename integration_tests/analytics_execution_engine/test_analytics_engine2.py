@@ -8,10 +8,12 @@ from __future__ import absolute_import
 
 from time import sleep
 import pytest
+from celery import Celery
 
 import datacube.analytics.job_result
 from datacube.analytics.utils.store_handler import *
 from datacube.analytics.decomposer import AnalyticsEngineV2
+from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
 from datacube.analytics.analytics_client import AnalyticsClient
 
 import logging
@@ -73,6 +75,61 @@ def test_submit_invalid_job(store_handler, redis_config, driver_manager):
         engine.analyse(lambda x: x, {'a': 1, 'b': 2})
 
     store_handler._store.flushdb()
+
+
+def celery_app(local_config):
+    store_config = local_config.redis_celery_config
+    print(store_config)
+
+    if 'password' in store_config:
+        url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
+    else:
+        url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
+                                            store_config['port'], store_config['db'])
+    global app
+    app = Celery('ee_task', broker=url, backend=url)
+
+    app.conf.update(
+        task_serializer='pickle',
+        result_serializer='pickle',
+        accept_content=['pickle'])
+
+
+@pytest.fixture(scope='module')
+def ee_celery(local_config, request):
+    store_config = local_config.redis_celery_config
+    launch_ae_worker(store_config)
+
+    def finish():
+        print("teardown celery")
+        stop_worker()
+    request.addfinalizer(finish)
+
+
+def check_submit_job_celery(store_handler, redis_config, local_config, driver_manager):
+    logger = logging.getLogger(__name__)
+    logger.debug('Started.')
+
+    store_handler._store.flushdb()
+
+    def base_function(data):
+        return data
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.07, 149.18),
+        'y': (-35.32, -35.28)
+    }
+    client = AnalyticsClient(redis_config, ee_store_config=local_config.redis_celery_config,
+                             driver_manager=driver_manager)
+    jro = client.submit_python_function_base(base_function, data,
+                                             storage_params={'chunk': (1, 231, 420)},
+                                             config={'redis_celery': local_config.redis_celery_config,
+                                                     'redis': local_config.redis_config,
+                                                     'datacube': local_config.datacube_config})
+    result = jro.get(disable_sync_subtasks=False)[0].get(disable_sync_subtasks=False)
+    assert result.red.shape == (1, 231, 420)
+    assert result.blue.shape == (1, 231, 420)
 
 
 def check_submit_job(store_handler, redis_config, driver_manager):

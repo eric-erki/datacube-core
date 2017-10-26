@@ -52,7 +52,7 @@ class AnalyticsClient(object):
     communication/task management framework.
     '''
 
-    def __init__(self, store_config, driver_manager=None):
+    def __init__(self, store_config, ee_store_config=None, driver_manager=None):
         '''Initialise the client.
 
         :param dict store_config: A dictionary of store parameters, for the relevant type of store,
@@ -65,7 +65,18 @@ class AnalyticsClient(object):
         self._engine = AnalyticsEngineV2(store_config, driver_manager=driver_manager)
         self.logger.debug('Ready')
 
-    def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
+        if ee_store_config is not None:
+
+            if 'password' in ee_store_config:
+                url = 'redis://{}:{}/{}'.format(ee_store_config['host'], ee_store_config['port'], ee_store_config['db'])
+            else:
+                url = 'redis://:{}@{}:{}/{}'.format(ee_store_config['password'], ee_store_config['host'],
+                                                    ee_store_config['port'], ee_store_config['db'])
+
+            # global app
+            app.conf.update(result_backend=url, broker_url=url)
+
+    def submit_python_function(self, function, data, storage_params=None, config=None, *args, **kwargs):
         '''Submit a python function and data to the engine.
 
         :param function function: Python function to be executed by the engine.
@@ -77,15 +88,15 @@ class AnalyticsClient(object):
         :return: A :class:`JobResult` object.
 
         '''
-        jro = self._engine.analyse(function, data, storage_params, *args, **kwargs)[1]
+        jro = self._engine.analyse(function, data, storage_params, config, *args, **kwargs)[1]
         jro.client = self
         return jro
 
-    def submit_python_function_base(self, func, data, storage_params=None, *args, **kwargs):
+    def submit_python_function_base(self, func, data, storage_params=None, config=None, *args, **kwargs):
         from cloudpickle import dumps
         func = dumps(func)
         return app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
-                             args=(func, data, storage_params), kwargs=kwargs)
+                             args=(func, data, storage_params, config), kwargs=kwargs)
 
     def get_status(self, item):
         '''Return the status of a job or result.'''

@@ -113,16 +113,28 @@ class PostgresDb(object):
     def from_config(cls, config=LocalConfig.find(), application_name=None, validate_connection=True):
         app_name = cls._expand_app_name(application_name)
 
-        return PostgresDb.create(
-            config.db_hostname,
-            config.db_database,
-            config.db_username,
-            config.db_password,
-            config.db_port,
-            application_name=app_name,
-            validate=validate_connection,
-            pool_timeout=config.db_connection_timeout
-        )
+        if isinstance(config, dict):
+            return PostgresDb.create(
+                config['db_hostname'],
+                config['db_database'],
+                config['db_username'],
+                config['db_password'],
+                config['db_port'],
+                application_name=app_name,
+                validate=validate_connection,
+                pool_timeout=config['db_connection_timeout']
+            )
+        else:
+            return PostgresDb.create(
+                config.db_hostname,
+                config.db_database,
+                config.db_username,
+                config.db_password,
+                config.db_port,
+                application_name=app_name,
+                validate=validate_connection,
+                pool_timeout=config.db_connection_timeout
+            )
 
     def close(self):
         """
