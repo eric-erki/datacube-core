@@ -7,6 +7,7 @@ contains any data, that gets wiped out!
 from __future__ import absolute_import
 
 from time import sleep
+from sys import version_info
 import pytest
 from celery import Celery
 
@@ -100,6 +101,9 @@ def celery_app(local_config):
 
 @pytest.fixture(scope='session')
 def ee_celery(local_config, request):
+    if version_info < (3, 0):
+        pytest.skip('Celery tests require python3 ')
+        return
     store_config = local_config.redis_celery_config
     yield launch_ae_worker(store_config)
     print('Teardown celery')
