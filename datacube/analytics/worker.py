@@ -10,12 +10,10 @@ from datacube import Datacube
 from .utils.store_handler import StoreHandler, JobStatuses, ResultMetadata
 
 class Worker(object):
-    def __init__(self, store_config, driver_manager_config, job=None):
-        self._driver_manager_config = driver_manager_config
-        self._driver_manager = DriverManager(local_config=driver_manager_config)
-        self._store_config = store_config
-        self._store = StoreHandler(**store_config)
+    def __init__(self, config, job=None):
+        self._driver_manager = DriverManager(local_config=config['datacube'])
         self._datacube = Datacube(driver_manager=self._driver_manager)
+        self._store = StoreHandler(**config['store'])
         self._job = None  # To please pylint
         self._job_id = None  # To please pylint
         self.job = job

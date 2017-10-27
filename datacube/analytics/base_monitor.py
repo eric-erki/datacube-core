@@ -3,7 +3,6 @@ from __future__ import absolute_import, print_function
 from time import sleep
 from threading import Thread
 
-from .worker import Worker
 from .utils.store_handler import JobStatuses
 
 class BaseMonitor(object):
@@ -62,15 +61,3 @@ class BaseMonitor(object):
                                                   job0['data']['total_shape'],
                                                   dtype)
         self._worker.job_finishes()
-
-    # TODO: remove this method once moved to celery
-    def run_subjobs(self):
-        '''Run subjobs as threads, until celery is integrated.'''
-        for job in self._decomposed['jobs']:
-            Thread(target=self.run_subjobs_thread, args=(job,)).start()
-
-    # TODO: remove this method once moved to celery
-    def run_subjobs_thread(self, subjob):
-        from datacube.execution.execution_engine2 import ExecutionEngineV2
-        execution_engine = ExecutionEngineV2(self._store_config, self._manager, subjob)
-        execution_engine.execute(self._worker.job['result_descriptors'])

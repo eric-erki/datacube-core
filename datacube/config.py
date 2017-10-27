@@ -165,11 +165,19 @@ class LocalConfig(object):
 
     @property
     def redis_celery_config(self):
+        host = self._environment_prop('redis_celery.host')
+        port = int(self._environment_prop('redis_celery.port'))
+        db = int(self._environment_prop('redis_celery.db'))
+        password = self._environment_prop('redis_celery.password')
+        url = 'redis://{}{}:{}/{}'.format(
+            ':{}@'.format(password) if password else '',
+            host, port, db)
         return {
-            'host': self._environment_prop('redis_celery.host'),
-            'port': int(self._environment_prop('redis_celery.port')),
-            'db': int(self._environment_prop('redis_celery.db')),
-            'password': self._environment_prop('redis_celery.password')
+            'host': host,
+            'port': port,
+            'db': db,
+            'password': password,
+            'url': url
         }
 
     @property

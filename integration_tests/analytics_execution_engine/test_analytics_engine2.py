@@ -6,22 +6,17 @@ contains any data, that gets wiped out!
 
 from __future__ import absolute_import
 
+import logging
 from time import sleep
 from sys import version_info
 import pytest
 from celery import Celery
+import numpy as np
 
-import datacube.analytics.job_result
-from datacube.analytics.utils.store_handler import *
-from datacube.analytics.decomposer import AnalyticsEngineV2
+from datacube.analytics.utils.store_handler import StoreHandler, JobStatuses
 from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
 from datacube.analytics.analytics_client import AnalyticsClient
-from datacube.analytics.job_result import JobResult
-
-
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
+from datacube.api.core import Datacube
 
 # Skip all tests if redis cannot be imported
 redis = pytest.importorskip('redis')
@@ -62,41 +57,22 @@ def user_data():
     return users
 
 
-@pytest.mark.skip(reason="needs migration to celery")
-def test_submit_invalid_job(store_handler, redis_config, driver_manager):
-    '''
-    Test for failure of job submission when passing insufficient data or wrong type
-    '''
-    store_handler._store.flushdb()
-    engine = AnalyticsEngineV2(redis_config, driver_manager=driver_manager)
+# def celery_app(local_config):
+#     store_config = local_config.redis_celery_config
+#     print(store_config)
 
-    # submit bad data that is not a dictionary
-    with pytest.raises(TypeError):
-        engine.analyse(lambda x: x, [1, 2, 3, 4])
+#     if 'password' in store_config:
+#         url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
+#     else:
+#         url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
+#                                             store_config['port'], store_config['db'])
+#     global app
+#     app = Celery('ee_task', broker=url, backend=url)
 
-    # submit bad data that is a dict but does not have any measurements
-    with pytest.raises(LookupError):
-        engine.analyse(lambda x: x, {'a': 1, 'b': 2})
-
-    store_handler._store.flushdb()
-
-
-def celery_app(local_config):
-    store_config = local_config.redis_celery_config
-    print(store_config)
-
-    if 'password' in store_config:
-        url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
-    else:
-        url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
-                                            store_config['port'], store_config['db'])
-    global app
-    app = Celery('ee_task', broker=url, backend=url)
-
-    app.conf.update(
-        task_serializer='pickle',
-        result_serializer='pickle',
-        accept_content=['pickle'])
+#     app.conf.update(
+#         task_serializer='pickle',
+#         result_serializer='pickle',
+#         accept_content=['pickle'])
 
 
 @pytest.fixture(scope='session')
@@ -110,43 +86,31 @@ def ee_celery(local_config, request):
     stop_worker()
 
 
-def check_submit_job_celery(store_handler, redis_config, local_config, driver_manager):
-    logger = logging.getLogger(__name__)
-    logger.debug('Started.')
-
+def test_submit_invalid_job(store_handler, redis_config, local_config, driver_manager, ee_celery):
+    '''
+    Test for failure of job submission when passing insufficient data or wrong type
+    '''
     store_handler._store.flushdb()
-
-    def base_function(data):
-        return data
-    data = {
-        'product': 'ls5_nbar_albers',
-        'measurements': ['blue', 'red'],
-        'x': (149.07, 149.18),
-        'y': (-35.32, -35.28)
+    config = {
+        'datacube': local_config.datacube_config,
+        'store': redis_config,  # Modified version from the one in the local config file
+        'celery': local_config.redis_celery_config
     }
-    client = AnalyticsClient(redis_config, ee_store_config=local_config.redis_celery_config,
-                             driver_manager=driver_manager)
-    # Analysis promise
-    analysis_p = client.submit_python_function_base(base_function, data,
-                                                    storage_params={'chunk': (1, 231, 420)},
-                                                    config={'redis_celery': local_config.redis_celery_config,
-                                                            'redis': redis_config,
-                                                            'datacube': local_config.datacube_config})
-    analysis = analysis_p.get(disable_sync_subtasks=False)
-    jro = analysis[0]
-    # TODO: Fix this once a proper JRO is returned
-    assert jro == 'JRO'
+    client = AnalyticsClient(config)
 
-    for result_p in analysis[1]:
-        result = result_p.get(disable_sync_subtasks=False)
-        assert result.red.shape == (1, 231, 420)
-        assert result.blue.shape == (1, 231, 420)
-    # Leave time to fake workers to complete their tasks then flush the store
-    sleep(0.4)
+    # Submit bad data that is not a dictionary
+    # submit bad data that is not a dictionary
+    with pytest.raises(TypeError):
+        analysis_p = client.submit_python_function(lambda x: x, [1, 2, 3, 4])
+
+    # Submit bad data that is a dict but does not have any measurements
+    with pytest.raises(LookupError):
+        analysis_p = client.submit_python_function(lambda x: x, {'a': 1, 'b': 2})
+
     store_handler._store.flushdb()
 
 
-def check_submit_job(store_handler, redis_config, driver_manager):
+def check_submit_job(store_handler, redis_config, local_config, driver_manager):
     '''Test the following:
         - the submission of a job with real data
         - decomposition
@@ -159,7 +123,6 @@ def check_submit_job(store_handler, redis_config, driver_manager):
 
     This test function needs further work to test the JRO and corresponding store values.
     '''
-
     logger = logging.getLogger(__name__)
     logger.debug('Started.')
 
@@ -173,9 +136,20 @@ def check_submit_job(store_handler, redis_config, driver_manager):
         'x': (149.07, 149.18),
         'y': (-35.32, -35.28)
     }
-    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
-    jro = client.submit_python_function(base_function, data,
-                                        storage_params={'chunk': (1, 231, 420)})
+    config = {
+        'datacube': local_config.datacube_config,
+        'store': redis_config,  # Modified version from the one in the local config file
+        'celery': local_config.redis_celery_config
+    }
+    client = AnalyticsClient(config)
+    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
+    jro, results = client.submit_python_function(base_function, data, storage_params={'chunk': (1, 231, 420)})
+
+    # TODO: remove when results are not returned any more
+    for result_p in results:
+        result = result_p.get(disable_sync_subtasks=False)
+        assert result.red.shape == (1, 231, 420)
+        assert result.blue.shape == (1, 231, 420)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -186,7 +160,7 @@ def check_submit_job(store_handler, redis_config, driver_manager):
     jro.update()
 
     logger.debug('JRO\n{}'.format(jro))
-    logger.debug('Store dump\n{}'.format(client._engine.store.str_dump()))
+    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
 
     # Ensure an id is set for the job and one of its datasets
     assert isinstance(jro.job.id, int)
@@ -210,26 +184,24 @@ def check_submit_job(store_handler, redis_config, driver_manager):
     assert(returned_calc.shape == (1, 231, 420))
 
     # Retrieve data directly and check that results are same as data
-    from datacube.api.core import Datacube
     dc = Datacube(driver_manager=driver_manager)
     data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-    import numpy
-    numpy.testing.assert_array_equal(returned_calc.values, data_array.red.values)
+    np.testing.assert_array_equal(returned_calc.values, data_array.red.values)
 
     # check data stored correctly
-    final_job = client._engine.store.get_job(jro.job.id)
-    assert client._engine.store.get_data(final_job.data_id) == data
+    final_job = client._store.get_job(jro.job.id)
+    assert client._store.get_data(final_job.data_id) == data
 
     # there should be at least one job dependency
-    job_dep = client._engine.store.get_job_dependencies(jro.job.id)
+    job_dep = client._store.get_job_dependencies(jro.job.id)
     assert len(job_dep[0]) > 0
 
-    # Leave time to fake workers to complete their tasks then flush the store
+    # Leave time for workers to complete their tasks then flush the store
     sleep(0.4)
     store_handler._store.flushdb()
 
 
-def check_do_the_math(store_handler, redis_config, driver_manager):
+def check_do_the_math(store_handler, redis_config, local_config, driver_manager):
     """
     Submit a function that does something
     """
@@ -252,9 +224,20 @@ def check_do_the_math(store_handler, redis_config, driver_manager):
         'x': (149.07, 149.18),
         'y': (-35.32, -35.28)
     }
-    client = AnalyticsClient(redis_config, driver_manager=driver_manager)
-    jro = client.submit_python_function(band_transform, data_desc,
-                                        storage_params={'chunk': (1, 231, 420)})
+    config = {
+        'datacube': local_config.datacube_config,
+        'store': redis_config,  # Modified version from the one in the local config file
+        'celery': local_config.redis_celery_config
+    }
+    client = AnalyticsClient(config)
+    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
+    jro, results = client.submit_python_function(band_transform, data_desc, storage_params={'chunk': (1, 231, 420)})
+
+    # TODO: remove when results are not returned any more
+    for result_p in results:
+        result = result_p.get(disable_sync_subtasks=False)
+        assert result.red.shape == (1, 231, 420)
+        assert result.blue.shape == (1, 231, 420)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -270,10 +253,10 @@ def check_do_the_math(store_handler, redis_config, driver_manager):
     returned_calc = jro.results.red[:]
 
     # Retrieve data directly and check that bands are transformed
-    from datacube.api.core import Datacube
     dc = Datacube(driver_manager=driver_manager)
     data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-    import numpy
-    numpy.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
+    np.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
 
+    # Leave time for workers to complete their tasks then flush the store
+    sleep(0.4)
     store_handler._store.flushdb()

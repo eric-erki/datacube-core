@@ -4,39 +4,23 @@ submitting jobs in a cluster and receiving job result objects in return.'''
 from __future__ import absolute_import
 
 import logging
-import time
-from threading import Thread
-from uuid import uuid4
-import numpy as np
-from pprint import pformat
 from celery import Celery
+from cloudpickle import dumps
 
-from .decomposer import AnalyticsEngineV2
-from .utils.store_handler import FunctionTypes, JobStatuses, ResultTypes, ResultMetadata, StoreHandler
-from datacube.analytics.job_result import JobResult, Job, Results, LoadType
-from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
+from .utils.store_handler import StoreHandler
+from datacube.analytics.job_result import JobResult, Job, Results
 from datacube.config import LocalConfig
 
 
 def celery_app(store_config=None):
-
     if store_config is None:
         local_config = LocalConfig.find()
         store_config = local_config.redis_celery_config
-
-    if 'password' in store_config:
-        url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
-    else:
-        url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
-                                            store_config['port'], store_config['db'])
-
-    _app = Celery('ee_task', broker=url, backend=url)
-
+    _app = Celery('ee_task', broker=store_config['url'], backend=store_config['url'])
     _app.conf.update(
         task_serializer='pickle',
         result_serializer='pickle',
         accept_content=['pickle'])
-
     return _app
 
 
@@ -45,42 +29,27 @@ app = celery_app()
 
 
 class AnalyticsClient(object):
-    '''Analytics client allowing interaction with the back-end engine.
+    '''Analytics client allowing interaction with the back-end engine through celery.
 
-    For now, this is a mock implementation making direct calls to the engine and store handler. In
-    the future, the calls should be made over the network, e.g. using celery or other
-    communication/task management framework.
+    TODO: For now, the jro updates are made through direct calls to redis rather than through
+    celery., which will be implemented in the future.
     '''
 
-    def __init__(self, store_config, ee_store_config=None, driver_manager=None):
+    def __init__(self, config):
         '''Initialise the client.
 
-        :param dict store_config: A dictionary of store parameters, for the relevant type of store,
-          e.g. redis.
-
-        .. todo:: The final implementation should NOT have a store_config but instead a
-        configuration allowing to send tasks to a remote engine.
+        :param dict config: A dictionary containing the configuration parameters of `{'datacube':
+          ..., 'store': ..., 'celery': ...}`
         '''
-        self.store_config = store_config
-        self.driver_manager = driver_manager
-        self._engine = None
-        self._store = StoreHandler(**store_config)
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._config = config
+        self._store = StoreHandler(**config['store'])
+        # global app
+        app.conf.update(result_backend=config['celery']['url'], broker_url=config['celery']['url'])
         self.logger.debug('Ready')
 
-        if ee_store_config is not None:
-
-            if 'password' in ee_store_config:
-                url = 'redis://{}:{}/{}'.format(ee_store_config['host'], ee_store_config['port'], ee_store_config['db'])
-            else:
-                url = 'redis://:{}@{}:{}/{}'.format(ee_store_config['password'], ee_store_config['host'],
-                                                    ee_store_config['port'], ee_store_config['db'])
-
-            # global app
-            app.conf.update(result_backend=url, broker_url=url)
-
-    def submit_python_function(self, function, data, storage_params=None, config=None, *args, **kwargs):
-        '''Submit a python function and data to the engine.
+    def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
+        '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
         :param dict data: Dataset descriptor.
@@ -88,21 +57,16 @@ class AnalyticsClient(object):
           `ttl` is the life span of the results and `chunk` the preferred result chunking.
         :param list args: Optional positional arguments for the function.
         :param dict kargs: Optional keyword arguments for the funtion.
-        :return: A :class:`JobResult` object.
-
+        :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
+          subjob results.
         '''
-        # pylint: disable=too-many-function-args
-        self._engine = AnalyticsEngineV2(self.store_config, self.driver_manager,
-                                         function, data, storage_params, config, *args, **kwargs)
-        jro = self._engine.analyse(function, data, storage_params, config, *args, **kwargs)[1]
-        jro.client = self
-        return jro
-
-    def submit_python_function_base(self, function, data, storage_params=None, config=None, *args, **kwargs):
-        from cloudpickle import dumps
         func = dumps(function)
-        return app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
-                             args=(func, data, storage_params, config), kwargs=kwargs)
+        analysis_p = app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
+                                   args=(self._config, func, data, storage_params), kwargs=kwargs)
+        analysis = analysis_p.get(disable_sync_subtasks=False)
+        jro = JobResult(*analysis[0], client=self)
+        results = analysis[1]
+        return (jro, results)
 
     def get_status(self, item):
         '''Return the status of a job or result.'''

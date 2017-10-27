@@ -59,10 +59,10 @@ class JobResult(object):
     jro.results.masking.red_mask[:, 0:100, 0:100]
     """
 
-    def __init__(self, job_info, result_info, driver_manager=None):
+    def __init__(self, job_info, result_info, client=None, driver_manager=None):
         """Initialise the Job/Result object.
         """
-        self._client = None
+        self._client = client
         self._job = Job(self, job_info)
         self._results = Results(self, result_info, driver_manager)
 

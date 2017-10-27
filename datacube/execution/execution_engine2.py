@@ -1,32 +1,26 @@
-'''A simple execution engine.
-
-TODO: Make it a celery worker in the future.
-'''
+'''A simple execution engine.'''
 
 from __future__ import absolute_import, print_function
 
-import sys
+from sys import version_info
 import numpy as np
 import zstd
 from cloudpickle import loads
 
 from datacube.analytics.worker import Worker
-from datacube.analytics.utils.store_handler import ResultMetadata
-from datacube import Datacube
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 
 class ExecutionEngineV2(Worker):
     def _get_data(self, query, chunk=None):
         '''Retrieves data for the worker.'''
-        dc = Datacube(driver_manager=self._driver_manager)
         if chunk is None:
-            return dc.load(use_threads=True, **query)
+            return self._datacube.load(use_threads=True, **query)
         else:
-            metadata = dc.metadata_for_load(**query)
-            return dc.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
-                                metadata['measurements_values'].values(),
-                                driver_manager=self._driver_manager, use_threads=True)
+            metadata = self._datacube.metadata_for_load(**query)
+            return self._datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
+                                            metadata['measurements_values'].values(),
+                                            driver_manager=self._driver_manager, use_threads=True)
 
     def _compute_result(self, function, data):
         '''Run the function on the data.'''
@@ -40,7 +34,7 @@ class ExecutionEngineV2(Worker):
         self.logger.debug('Persisting computed result to %s-%s',
                           result_descriptor['bucket'], s3_key)
         cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
-        if sys.version_info >= (3, 5):
+        if version_info >= (3, 5):
             data = bytes(array.data)
         else:
             data = bytes(np.ascontiguousarray(array).data)

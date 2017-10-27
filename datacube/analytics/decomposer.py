@@ -17,9 +17,8 @@ class AnalyticsEngineV2(Worker):
         'ttl': -1
     }
 
-    def __init__(self, store_config, driver_manager_config,
-                 function, data, storage_params=None, *args, **kwargs):
-        super(AnalyticsEngineV2, self).__init__(store_config, driver_manager_config)
+    def __init__(self, config, function, data, storage_params):
+        super(AnalyticsEngineV2, self).__init__(config)
         storage = self.DEFAULT_STORAGE.copy()
         if storage_params:
             storage.update(storage_params)
@@ -28,7 +27,7 @@ class AnalyticsEngineV2(Worker):
         self.job = self.decomposed['base']
         self.logger.debug('Decomposed\n%s', pformat(self.decomposed, indent=4))
 
-    def analyse(self):
+    def analyse(self, *args, **kwargs):
         '''user - job submit
         AE - gets the job
            - job decomposition
@@ -56,10 +55,8 @@ class AnalyticsEngineV2(Worker):
         base_monitor = BaseMonitor(self, self._store, self._driver_manager, self.decomposed)
         base_monitor.monitor_completion()
 
-        # TODO: remove this method once moved to celery
-        #base_monitor.run_subjobs()
-
-        return (self.decomposed['jobs'], self._create_jro(self.decomposed['base']),
+        return (self.decomposed['jobs'],
+                self._get_jro_params(self.decomposed['base']),
                 self.decomposed['base']['result_descriptors'])
 
     def _determine_function_type(self, func):
@@ -150,7 +147,8 @@ class AnalyticsEngineV2(Worker):
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
-        # metadata should be part of decomposed_data so loading on the workers does not require a database connection
+        # metadata should be part of decomposed_data so loading on the workers does not require a
+        # database connection
         # decomposed_data['metadata'] = metadata
         # fails pickling in python 2.7
         decomposed_data['indices'] = indices
@@ -193,8 +191,8 @@ class AnalyticsEngineV2(Worker):
             }
         return descriptors
 
-    def _create_jro(self, job):
-        '''Create the job result object for a base job.'''
+    def _get_jro_params(self, job):
+        '''Create the parameters allowing to create a JobResult.'''
         job_descriptor = {
             'id': job['id']
             }
@@ -202,4 +200,4 @@ class AnalyticsEngineV2(Worker):
             'id': job['result_id'],
             'results': job['result_descriptors']
         }
-        return JobResult(job_descriptor, result_descriptor)
+        return (job_descriptor, result_descriptor)
