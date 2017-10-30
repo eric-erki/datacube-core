@@ -9,7 +9,7 @@ from cloudpickle import dumps
 
 from .utils.store_handler import StoreHandler
 from .job_result import JobResult, Job, Results
-from .update_engine2 import UpdateEngineV2
+from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
 
 
@@ -67,9 +67,9 @@ class AnalyticsClient(object):
     def get_status(self, item):
         '''Return the status of a job or result.'''
         if isinstance(item, Job):
-            action = UpdateEngineV2.Actions.GET_JOB_STATUS
+            action = UpdateActions.GET_JOB_STATUS
         elif isinstance(item, Results):
-            action = UpdateEngineV2.Actions.GET_RESULT_STATUS
+            action = UpdateActions.GET_RESULT_STATUS
         else:
             raise ValueError('Can only return status of Job or Results')
         status_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
@@ -81,7 +81,7 @@ class AnalyticsClient(object):
         for dataset in jro.results.datasets:
             jro_result = jro.results.datasets[dataset]
             result_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
-                                     args=(UpdateEngineV2.Actions.GET_RESULT, jro_result.id))
+                                     args=(UpdateActions.GET_RESULT, jro_result.id))
             result = result_p.get(disable_sync_subtasks=False)
             jro_result.update(result.descriptor)
             self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '

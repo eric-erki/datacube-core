@@ -9,12 +9,15 @@ from enum import Enum
 from .utils.store_handler import StoreHandler
 from datacube.config import LocalConfig
 
+
+class UpdateActions(Enum):
+    '''Valid actions for the AnalyticsUpdater.'''
+    GET_JOB_STATUS = 1
+    GET_RESULT_STATUS = 2
+    GET_RESULT = 3
+
+
 class UpdateEngineV2(object):
-    class Actions(Enum):
-        '''Valid actions for the AnalyticsUpdater.'''
-        GET_JOB_STATUS = 1
-        GET_RESULT_STATUS = 2
-        GET_RESULT = 3
 
     def __init__(self, config):
         '''Initialise the update engine.'''
@@ -28,13 +31,13 @@ class UpdateEngineV2(object):
 
     def execute(self, action, item_id):
         '''Execute an action returning some update.'''
-        if action not in self.Actions:
+        if action not in UpdateActions:
             raise ValueError('Invalid action: {}'.format(action))
         result = None
-        if action == self.Actions.GET_JOB_STATUS:
+        if action == UpdateActions.GET_JOB_STATUS:
             result = self._store.get_job_status(item_id)
-        elif action == self.Actions.GET_RESULT_STATUS:
+        elif action == UpdateActions.GET_RESULT_STATUS:
             result = self._store.get_result_status(item_id)
-        elif action == self.Actions.GET_RESULT:
+        elif action == UpdateActions.GET_RESULT:
             result = self._store.get_result(item_id)
         return result

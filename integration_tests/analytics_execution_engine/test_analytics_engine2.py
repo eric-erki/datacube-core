@@ -16,7 +16,7 @@ import numpy as np
 from datacube.analytics.utils.store_handler import StoreHandler, JobStatuses
 from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
 from datacube.analytics.analytics_client import AnalyticsClient
-from datacube.analytics.update_engine2 import UpdateEngineV2
+from datacube.analytics.update_engine2 import UpdateEngineV2, UpdateActions
 from datacube.api.core import Datacube
 
 # Skip all tests if redis cannot be imported
@@ -60,9 +60,6 @@ def user_data():
 
 @pytest.fixture(scope='session')
 def ee_celery(local_config, request):
-    if version_info < (3, 0):
-        pytest.skip('Celery tests require python3 ')
-        return
     thread = launch_ae_worker(local_config)
     yield
     print('Teardown celery')
@@ -238,6 +235,6 @@ def test_submit_invalid_update(local_config):
         updater.execute(1, 3)
 
     # Submit invalid result id
-    for action in UpdateEngineV2.Actions:
+    for action in UpdateActions:
         with pytest.raises(ValueError):
             updater.execute(action, 0)
