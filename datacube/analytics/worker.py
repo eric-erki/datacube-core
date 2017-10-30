@@ -12,12 +12,12 @@ from datacube.config import LocalConfig
 
 class Worker(object):
     def __init__(self, config=None):
+        self.logger = logging.getLogger(self.__class__.__name__)
         if not config:
             config = LocalConfig.find()
         self._driver_manager = DriverManager(local_config=config.datacube_config)
         self._datacube = Datacube(driver_manager=self._driver_manager)
         self._store = StoreHandler(**config.redis_config)
-        self.logger = logging.getLogger(self.__class__.__name__)
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object

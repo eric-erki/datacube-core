@@ -8,7 +8,8 @@ from celery import Celery
 from cloudpickle import dumps
 
 from .utils.store_handler import StoreHandler
-from datacube.analytics.job_result import JobResult, Job, Results
+from .job_result import JobResult, Job, Results
+from .update_engine2 import UpdateEngineV2
 from datacube.config import LocalConfig
 
 
@@ -29,17 +30,12 @@ app = celery_app()
 
 
 class AnalyticsClient(object):
-    '''Analytics client allowing interaction with the back-end engine through celery.
-
-    TODO: For now, the jro updates are made through direct calls to redis rather than through
-    celery., which will be implemented in the future.
-    '''
+    '''Analytics client allowing interaction with the back-end engine through celery.'''
 
     def __init__(self, config):
         '''Initialise the client.
 
-        :param dict config: A dictionary containing the configuration parameters of `{'datacube':
-          ..., 'store': ..., 'celery': ...}`
+        :param LocalConfig config: The local config.
         '''
         self.logger = logging.getLogger(self.__class__.__name__)
         self._store = StoreHandler(**config.redis_config)
@@ -70,23 +66,25 @@ class AnalyticsClient(object):
 
     def get_status(self, item):
         '''Return the status of a job or result.'''
-        status = None
         if isinstance(item, Job):
-            status = self._store.get_job_status(item.id)
+            action = UpdateEngineV2.Actions.GET_JOB_STATUS
         elif isinstance(item, Results):
-            status = self._store.get_result_status(item.id)
+            action = UpdateEngineV2.Actions.GET_RESULT_STATUS
         else:
             raise ValueError('Can only return status of Job or Results')
+        status_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
+                                 args=(action, item.id))
+        status = status_p.get(disable_sync_subtasks=False)
         return status
 
     def update_jro(self, jro):
         for dataset in jro.results.datasets:
             jro_result = jro.results.datasets[dataset]
-            # pylint: disable=protected-access
-            result = self._store.get_result(jro_result._id)
+            result_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
+                                     args=(UpdateEngineV2.Actions.GET_RESULT, jro_result.id))
+            result = result_p.get(disable_sync_subtasks=False)
             jro_result.update(result.descriptor)
-            # pylint: disable=protected-access
             self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '
                               'shape=%s, dtype=%s',
-                              jro_result._id, dataset,
+                              jro_result.id, dataset,
                               result.descriptor['shape'], result.descriptor['dtype'])

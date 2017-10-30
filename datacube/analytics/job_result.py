@@ -246,7 +246,13 @@ class LazyArray(object):
     def __str__(self):
         return pformat(self.to_dict(), indent=2)
 
-    # pylint: disable=too-many-locals, too-many-branches
+    @property
+    def id(self):
+        """id of the job
+        """
+        return self._id
+
+     # pylint: disable=too-many-locals, too-many-branches
     def __getitem__(self, slices):
         """Slicing operator to retrieve data stored on S3/DataCube
         Todo:

@@ -14,8 +14,9 @@ from celery import Celery
 import numpy as np
 
 from datacube.analytics.utils.store_handler import StoreHandler, JobStatuses
-from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker, initialise_engines
+from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
 from datacube.analytics.analytics_client import AnalyticsClient
+from datacube.analytics.update_engine2 import UpdateEngineV2
 from datacube.api.core import Datacube
 
 # Skip all tests if redis cannot be imported
@@ -225,3 +226,16 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
     # Leave time for workers to complete their tasks then flush the store
     sleep(0.4)
     store_handler._store.flushdb()
+
+
+def test_submit_invalid_update(local_config):
+    '''Test for failure of jro updates when passing insufficient data or wrong type.'''
+    updater = UpdateEngineV2(local_config)
+    # Submit invalid action type
+    with pytest.raises(ValueError):
+        updater.execute(1, 3)
+
+    # Submit invalid result id
+    for action in UpdateEngineV2.Actions:
+        with pytest.raises(ValueError):
+            updater.execute(action, 0)
