@@ -53,12 +53,14 @@ def launch_ae_worker(local_config):
         local_config = LocalConfig.find()
     store_config = local_config.redis_celery_config
     initialise_engines(local_config)
-    Thread(target=launch_worker_thread, args=(store_config['url'],)).start()
+    thread = Thread(target=launch_worker_thread, args=(store_config['url'],))
+    thread.start()
+    return thread
 
 def launch_worker_thread(url):
     app.conf.update(result_backend=url,
                     broker_url=url)
-    argv = ['worker', '-A', 'datacube.analytics.analytics_engine2', '-l', 'DEBUG']
+    argv = ['worker', '-A', 'datacube.analytics.analytics_engine2', '-l', 'DEBUG', '--concurrency=1', '--autoscale=1,1']
     app.worker_main(argv)
 
 def stop_worker():

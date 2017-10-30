@@ -63,12 +63,14 @@ def ee_celery(local_config, request):
     if version_info < (3, 0):
         pytest.skip('Celery tests require python3 ')
         return
-    yield launch_ae_worker(local_config)
+    thread = launch_ae_worker(local_config)
+    yield
     print('Teardown celery')
     stop_worker()
+    thread.join()
 
 
-def test_submit_invalid_job(store_handler, redis_config, local_config, driver_manager, ee_celery):
+def _test_submit_invalid_job(store_handler, redis_config, local_config, driver_manager, ee_celery):
     '''
     Test for failure of job submission when passing insufficient data or wrong type
     '''
