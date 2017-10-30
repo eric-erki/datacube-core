@@ -14,7 +14,7 @@ from celery import Celery
 import numpy as np
 
 from datacube.analytics.utils.store_handler import StoreHandler, JobStatuses
-from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker
+from datacube.analytics.analytics_engine2 import launch_ae_worker, stop_worker, initialise_engines
 from datacube.analytics.analytics_client import AnalyticsClient
 from datacube.api.core import Datacube
 
@@ -57,31 +57,12 @@ def user_data():
     return users
 
 
-# def celery_app(local_config):
-#     store_config = local_config.redis_celery_config
-#     print(store_config)
-
-#     if 'password' in store_config:
-#         url = 'redis://{}:{}/{}'.format(store_config['host'], store_config['port'], store_config['db'])
-#     else:
-#         url = 'redis://:{}@{}:{}/{}'.format(store_config['password'], store_config['host'],
-#                                             store_config['port'], store_config['db'])
-#     global app
-#     app = Celery('ee_task', broker=url, backend=url)
-
-#     app.conf.update(
-#         task_serializer='pickle',
-#         result_serializer='pickle',
-#         accept_content=['pickle'])
-
-
 @pytest.fixture(scope='session')
 def ee_celery(local_config, request):
     if version_info < (3, 0):
         pytest.skip('Celery tests require python3 ')
         return
-    store_config = local_config.redis_celery_config
-    yield launch_ae_worker(store_config)
+    yield launch_ae_worker(local_config)
     print('Teardown celery')
     stop_worker()
 
@@ -91,14 +72,8 @@ def test_submit_invalid_job(store_handler, redis_config, local_config, driver_ma
     Test for failure of job submission when passing insufficient data or wrong type
     '''
     store_handler._store.flushdb()
-    config = {
-        'datacube': local_config.datacube_config,
-        'store': redis_config,  # Modified version from the one in the local config file
-        'celery': local_config.redis_celery_config
-    }
-    client = AnalyticsClient(config)
+    client = AnalyticsClient(local_config)
 
-    # Submit bad data that is not a dictionary
     # submit bad data that is not a dictionary
     with pytest.raises(TypeError):
         analysis_p = client.submit_python_function(lambda x: x, [1, 2, 3, 4])
@@ -136,12 +111,7 @@ def check_submit_job(store_handler, redis_config, local_config, driver_manager):
         'x': (149.07, 149.18),
         'y': (-35.32, -35.28)
     }
-    config = {
-        'datacube': local_config.datacube_config,
-        'store': redis_config,  # Modified version from the one in the local config file
-        'celery': local_config.redis_celery_config
-    }
-    client = AnalyticsClient(config)
+    client = AnalyticsClient(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(base_function, data, storage_params={'chunk': (1, 231, 420)})
 
@@ -224,12 +194,7 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
         'x': (149.07, 149.18),
         'y': (-35.32, -35.28)
     }
-    config = {
-        'datacube': local_config.datacube_config,
-        'store': redis_config,  # Modified version from the one in the local config file
-        'celery': local_config.redis_celery_config
-    }
-    client = AnalyticsClient(config)
+    client = AnalyticsClient(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(band_transform, data_desc, storage_params={'chunk': (1, 231, 420)})
 

@@ -42,10 +42,10 @@ class AnalyticsClient(object):
           ..., 'store': ..., 'celery': ...}`
         '''
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._config = config
-        self._store = StoreHandler(**config['store'])
+        self._store = StoreHandler(**config.redis_config)
         # global app
-        app.conf.update(result_backend=config['celery']['url'], broker_url=config['celery']['url'])
+        app.conf.update(result_backend=config.redis_celery_config['url'],
+                        broker_url=config.redis_celery_config['url'])
         self.logger.debug('Ready')
 
     def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
@@ -62,7 +62,7 @@ class AnalyticsClient(object):
         '''
         func = dumps(function)
         analysis_p = app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
-                                   args=(self._config, func, data, storage_params), kwargs=kwargs)
+                                   args=(func, data, storage_params), kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis[0], client=self)
         results = analysis[1]

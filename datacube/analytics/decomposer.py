@@ -17,17 +17,7 @@ class AnalyticsEngineV2(Worker):
         'ttl': -1
     }
 
-    def __init__(self, config, function, data, storage_params):
-        super(AnalyticsEngineV2, self).__init__(config)
-        storage = self.DEFAULT_STORAGE.copy()
-        if storage_params:
-            storage.update(storage_params)
-        function_type = self._determine_function_type(function)
-        self.decomposed = self._decompose(function_type, function, data, storage)
-        self.job = self.decomposed['base']
-        self.logger.debug('Decomposed\n%s', pformat(self.decomposed, indent=4))
-
-    def analyse(self, *args, **kwargs):
+    def analyse(self, function, data, storage_params, *args, **kwargs):
         '''user - job submit
         AE - gets the job
            - job decomposition
@@ -48,16 +38,24 @@ class AnalyticsEngineV2(Worker):
              - job/result
                - status
         '''
+        # Decompose
+        storage = self.DEFAULT_STORAGE.copy()
+        if storage_params:
+            storage.update(storage_params)
+        function_type = self._determine_function_type(function)
+        decomposed = self._decompose(function_type, function, data, storage)
+        self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
+
         # Run the base job
-        self.job_starts()
+        self.job_starts(decomposed['base'])
 
         # Create a thread to monitor job completion, until it gets implemented in the coming months.
-        base_monitor = BaseMonitor(self, self._store, self._driver_manager, self.decomposed)
+        base_monitor = BaseMonitor(self, self._store, self._driver_manager, decomposed)
         base_monitor.monitor_completion()
 
-        return (self.decomposed['jobs'],
-                self._get_jro_params(self.decomposed['base']),
-                self.decomposed['base']['result_descriptors'])
+        return (decomposed['jobs'],
+                self._get_jro_params(decomposed['base']),
+                decomposed['base']['result_descriptors'])
 
     def _determine_function_type(self, func):
         '''Determine the type of a function.'''

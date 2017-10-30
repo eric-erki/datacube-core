@@ -53,11 +53,11 @@ class BaseMonitor(object):
         job0 = self._decomposed['jobs'][0]
         # TODO: this way of getting base result shape will not work if job data decomposed into
         # smaller chunks
-        for array_name, result_descriptor in self._worker.job['result_descriptors'].items():
+        for array_name, result_descriptor in self._decomposed['base']['result_descriptors'].items():
             # Use the dtype from the first sub-job as dtype for the base result, for that aray_name
             sub_result_id = job0['result_descriptors'][array_name]['id']
             dtype = self._store.get_result(sub_result_id).descriptor['dtype']
             self._worker.update_result_descriptor(result_descriptor,
                                                   job0['data']['total_shape'],
                                                   dtype)
-        self._worker.job_finishes()
+        self._worker.job_finishes(self._decomposed['base'])

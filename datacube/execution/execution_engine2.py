@@ -42,18 +42,18 @@ class ExecutionEngineV2(Worker):
         s3io = S3IO(use_s3, None)
         s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
 
-    def execute(self, base_results):
+    def execute(self, job, base_results, *args, **kwargs):
         '''Start the job, save results, then set it as completed.'''
-        self.job_starts()
+        self.job_starts(job)
 
         # Get data for worker here
-        data = self._get_data(self._job['data']['query'], self._job['slice'])
-        if not set(data.data_vars) == set(self._job['result_descriptors'].keys()):
+        data = self._get_data(job['data']['query'], job['slice'])
+        if not set(data.data_vars) == set(job['result_descriptors'].keys()):
             raise ValueError('Inconsistent variables in data and result descriptors:\n{} vs. {}'.format(
-                set(data.data_vars), set(self._job['result_descriptors'].keys())))
+                set(data.data_vars), set(job['result_descriptors'].keys())))
 
         # Execute function here
-        computed = self._compute_result(self.job['function'], data)
+        computed = self._compute_result(job['function'], data)
 
         # Save results here
         # map input to output
@@ -61,12 +61,12 @@ class ExecutionEngineV2(Worker):
         #       - storage parameters
         #       - naming parameters
         #       - unique key name
-        for array_name, descriptor in self._job['result_descriptors'].items():
+        for array_name, descriptor in job['result_descriptors'].items():
             base_result_descriptor = base_results[array_name]
             array = computed[array_name]
             # Update result descriptor based on processed data
             self.update_result_descriptor(descriptor, array.shape, array.dtype)
-            self._save_array_in_s3(array, base_result_descriptor, self._job['chunk_id'])
-        self.job_finishes()
+            self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'])
+        self.job_finishes(job)
 
         return computed

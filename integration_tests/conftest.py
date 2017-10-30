@@ -555,8 +555,6 @@ def redis_config(local_config):
     try:
         store = redis.StrictRedis(**redis_config)
         if store.ping():
-            # Select the DB with last index in the current store
-            redis_config['db'] = int(store.config_get('databases')['databases']) - 1
             print('\nUsing redis config: {}'.format(redis_config))
             return redis_config
     except redis.exceptions.ConnectionError as conn_error:

@@ -8,26 +8,16 @@ import logging
 from datacube.drivers.manager import DriverManager
 from datacube import Datacube
 from .utils.store_handler import StoreHandler, JobStatuses, ResultMetadata
+from datacube.config import LocalConfig
 
 class Worker(object):
-    def __init__(self, config, job=None):
-        self._driver_manager = DriverManager(local_config=config['datacube'])
+    def __init__(self, config=None):
+        if not config:
+            config = LocalConfig.find()
+        self._driver_manager = DriverManager(local_config=config.datacube_config)
         self._datacube = Datacube(driver_manager=self._driver_manager)
-        self._store = StoreHandler(**config['store'])
-        self._job = None  # To please pylint
-        self._job_id = None  # To please pylint
-        self.job = job
-        self.logger = logging.getLogger('{}#{}'.format(self.__class__.__name__, self._job_id))
-
-    @property
-    def job(self):
-        return self._job
-
-    @job.setter
-    def job(self, job):
-        self._job = job
-        self._job_id = self._job['id'] if job else None
-
+        self._store = StoreHandler(**config.redis_config)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object
@@ -48,42 +38,46 @@ class Worker(object):
         result.descriptor['dtype'] = dtype
         self._store.update_result(result_id, result)
 
-    def job_starts(self):
+    def job_starts(self, job):
         '''Set job to running status.'''
+        job_id = job['id']
         # Start job
-        self._store.set_job_status(self._job_id, JobStatuses.RUNNING)
+        self._store.set_job_status(job_id, JobStatuses.RUNNING)
         self.logger.debug('Job {:03d} ({}) is now {}'
-                          .format(self._job_id, self.__class__.__name__,
-                                  self._store.get_job_status(self._job_id).name))
+                          .format(job_id, self.__class__.__name__,
+                                  self._store.get_job_status(job_id).name))
         # Start combined result
-        self.result_starts(self._job['result_id'])
+        self.result_starts(job, job['result_id'])
         # Start individual results
-        for descriptor in self._job['result_descriptors'].values():
-            self.result_starts(descriptor['id'])
+        for descriptor in job['result_descriptors'].values():
+            self.result_starts(job, descriptor['id'])
 
-    def job_finishes(self):
+    def job_finishes(self, job):
         '''Set job to completed status.'''
+        job_id = job['id']
         # Stop individual results
-        for descriptor in self._job['result_descriptors'].values():
-            self.result_finishes(descriptor['id'])
+        for descriptor in job['result_descriptors'].values():
+            self.result_finishes(job, descriptor['id'])
         # Stop combined result
-        self.result_finishes(self._job['result_id'])
+        self.result_finishes(job, job['result_id'])
         # Stop job
-        self._store.set_job_status(self._job_id, JobStatuses.COMPLETED)
+        self._store.set_job_status(job_id, JobStatuses.COMPLETED)
         self.logger.debug('Job {:03d} ({}) is now {}'
-                          .format(self._job_id, self.__class__.__name__,
-                                  self._store.get_job_status(self._job_id).name))
+                          .format(job_id, self.__class__.__name__,
+                                  self._store.get_job_status(job_id).name))
 
-    def result_starts(self, result_id):
+    def result_starts(self, job, result_id):
         '''Set result to running status.'''
+        job_id = job['id']
         self._store.set_result_status(result_id, JobStatuses.RUNNING)
         self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                          .format(self._job_id, result_id, self.__class__.__name__,
+                          .format(job_id, result_id, self.__class__.__name__,
                                   self._store.get_result_status(result_id).name))
 
-    def result_finishes(self, result_id):
+    def result_finishes(self, job, result_id):
         '''Set result to completed status.'''
+        job_id = job['id']
         self._store.set_result_status(result_id, JobStatuses.COMPLETED)
         self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                          .format(self._job_id, result_id, self.__class__.__name__,
+                          .format(job_id, result_id, self.__class__.__name__,
                                   self._store.get_result_status(result_id).name))
