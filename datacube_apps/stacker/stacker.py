@@ -66,8 +66,8 @@ def make_stacker_tasks(index, config, cell_index=None, time=None, **kwargs):
 
     for query in task_app.break_query_into_years(time):
         cells = gw.list_cells(product=config['product'].name, cell_index=cell_index, **query)
-        for (cell_index_key, tile) in cells.items():
-            for (year, year_tile) in tile.split_by_time(freq='A'):
+        for cell_index_key, tile in cells.items():
+            for year, year_tile in tile.split_by_time(freq='A'):
                 storage_files = set(ds.local_path for ds in itertools.chain(*year_tile.sources.values))
                 if len(storage_files) > 1:
                     year_tile = gw.update_tile_lineage(year_tile)
@@ -119,10 +119,10 @@ def get_history_attribute(config, task):
         user=os.environ.get('USERNAME') or os.environ.get('USER'),
         app=APP_NAME,
         ver=datacube.__version__,
-        args=', '.join([config['app_config_file'],
+        args=', '.join([str(config['app_config_file']),
                         str(config['version']),
                         str(config['taskfile_version']),
-                        task['output_filename'],
+                        str(task['output_filename']),
                         str(task['year']),
                         str(task['cell_index'])
                        ]),
@@ -231,8 +231,12 @@ def process_result(index, result):
 @task_app.queue_size_option
 @task_app.task_app_options
 @task_app.task_app(make_config=make_stacker_config, make_tasks=make_stacker_tasks)
-def main(index, config, tasks, executor, queue_size, **kwargs):
-    """This script creates NetCDF files containing an entire year of tiles in the same file."""
+def main(config, tasks, executor, queue_size, **kwargs):
+    """Store datasets into NetCDF files containing an entire year in the same file.
+
+    - Uses the same configuration format as the `ingest` tool.
+    - However, does not create new datasets, but instead updates dataset locations then archives the original location.
+    """
     click.echo('Starting stacking utility...')
 
     task_func = partial(do_stack_task, config)
