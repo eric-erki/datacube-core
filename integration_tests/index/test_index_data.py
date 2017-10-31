@@ -303,7 +303,7 @@ def test_index_dataset_with_location(index, default_metadata_type, driver):
     assert len(location_times) == 1
     location, archived_time = location_times[0]
     assert location == re.sub("^file", driver.uri_scheme, first_file.as_uri())
-    # assert utc_now() > archived_time > before_archival_dt
+    assert utc_now() > archived_time > before_archival_dt
 
     was_restored = index.datasets.restore_location(dataset.id, first_uri)
     assert was_restored
