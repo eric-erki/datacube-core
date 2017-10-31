@@ -29,7 +29,7 @@ dependencies:
 - mock # testing
 - hypothesis # testing
 - matplotlib # pixel drill app
-- pathlib
+- pathlib2           # [py27]
 - compliance-checker = 3.0.3
 - cython # used by netcdf4 at compile only, but needed for compliance checker to load plugins
 - pygeoif = 0.6 # compliance-checker 3.0.3 fails with 0.7
