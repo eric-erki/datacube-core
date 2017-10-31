@@ -12,7 +12,7 @@ from configparser import ConfigParser
 import pytest
 
 import datacube.analytics.job_result
-from datacube.analytics.utils.store_handler import *
+from datacube.engine_common.store_handler import *
 
 
 FUNCTION_TYPES = list(FunctionTypes)

@@ -7,7 +7,7 @@ import logging
 from celery import Celery
 from cloudpickle import dumps
 
-from .utils.store_handler import StoreHandler
+from datacube.engine_common.store_handler import StoreHandler
 from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
@@ -57,7 +57,7 @@ class AnalyticsClient(object):
           subjob results.
         '''
         func = dumps(function)
-        analysis_p = app.send_task('datacube.analytics.analytics_engine2.run_python_function_base',
+        analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
                                    args=(func, data, storage_params), kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis[0], client=self)
@@ -72,7 +72,7 @@ class AnalyticsClient(object):
             action = UpdateActions.GET_RESULT_STATUS
         else:
             raise ValueError('Can only return status of Job or Results')
-        status_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
+        status_p = app.send_task('datacube.analytics.analytics_worker.get_update',
                                  args=(action, item.id))
         status = status_p.get(disable_sync_subtasks=False)
         return status
@@ -80,7 +80,7 @@ class AnalyticsClient(object):
     def update_jro(self, jro):
         for dataset in jro.results.datasets:
             jro_result = jro.results.datasets[dataset]
-            result_p = app.send_task('datacube.analytics.analytics_engine2.get_update',
+            result_p = app.send_task('datacube.analytics.analytics_worker.get_update',
                                      args=(UpdateActions.GET_RESULT, jro_result.id))
             result = result_p.get(disable_sync_subtasks=False)
             jro_result.update(result.descriptor)

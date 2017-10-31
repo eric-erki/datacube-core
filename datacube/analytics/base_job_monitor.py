@@ -3,10 +3,14 @@ from __future__ import absolute_import, print_function
 from time import sleep
 from threading import Thread
 
-from .utils.store_handler import JobStatuses
+from datacube.engine_common.store_handler import JobStatuses
 
-class BaseMonitor(object):
-    '''A temporary class monitoring the completion of a job.'''
+
+class BaseJobMonitor(object):
+    """A temporary class monitoring the completion of a job.
+    This functionality will reside in the AE worker who will periodically
+    perform monitoring at the proper times.
+    """
 
     def __init__(self, worker, store, driver_manager, decomposed):
         self._worker = worker

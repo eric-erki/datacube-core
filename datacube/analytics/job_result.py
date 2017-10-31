@@ -47,7 +47,7 @@ from enum import Enum
 import xarray as xr
 
 import datacube
-from .utils.store_handler import ResultTypes
+from datacube.engine_common.store_handler import ResultTypes
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 

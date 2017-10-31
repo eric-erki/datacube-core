@@ -6,7 +6,7 @@ from __future__ import absolute_import, print_function
 import logging
 from enum import Enum
 
-from .utils.store_handler import StoreHandler
+from datacube.engine_common.store_handler import StoreHandler
 from datacube.config import LocalConfig
 
 

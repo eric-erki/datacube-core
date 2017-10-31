@@ -7,8 +7,9 @@ import logging
 
 from datacube.drivers.manager import DriverManager
 from datacube import Datacube
-from .utils.store_handler import StoreHandler, JobStatuses, ResultMetadata
+from datacube.engine_common.store_handler import StoreHandler, JobStatuses, ResultMetadata
 from datacube.config import LocalConfig
+
 
 class Worker(object):
     def __init__(self, config=None):
@@ -21,10 +22,10 @@ class Worker(object):
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object
-        #descriptor['shape'] = shape
-        #if descriptor['chunk'] is None:
+        # descriptor['shape'] = shape
+        # if descriptor['chunk'] is None:
         #    descriptor['chunk'] = shape
-        #descriptor['dtype'] = dtype
+        # descriptor['dtype'] = dtype
         # Update store result descriptor
         result_id = descriptor['id']
         result = self._store.get_result(result_id)

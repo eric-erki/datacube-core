@@ -1,5 +1,3 @@
-'''A simple execution engine.'''
-
 from __future__ import absolute_import, print_function
 
 from sys import version_info
@@ -12,6 +10,34 @@ from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 
 class ExecutionEngineV2(Worker):
+    """This class is responsible for receiving decomposed jobs (function, data)
+    from the the AE via redis and decomposing it further into sizeable compute jobs
+    for the target compute node.
+        - if job from AE is too 'big'
+          - decompose into smaller jobs
+          - submit to EE cluster
+        - if job from AE/EE is not too big
+          - execute
+          - save
+        - merge results to match expected shape & chunk size of AE job.
+
+    Sub jobs are submitted to the Execution Engine worker(s) to process.
+
+    Results are persisted to either S3, S3-file or NetCDF.
+
+    A sub-job is a partial (function, data) job.
+
+    State & Health tracking are tracked via redis state/health store.
+    """
+
+    def _analyse(self, function, data, storage_params, *args, **kwargs):
+        """stub to call _decompose to perform data decomposition if required"""
+        pass
+
+    def _decompose(self, function_type, function, data, storage_params):
+        """further data decomposition to suit compute node"""
+        pass
+
     def _get_data(self, query, chunk=None):
         '''Retrieves data for the worker.'''
         if chunk is None:
