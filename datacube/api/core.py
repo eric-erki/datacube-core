@@ -23,6 +23,7 @@ from dask import array as da
 
 try:
     from pathos.threading import ThreadPool
+    from pathos.helpers import cpu_count
 except ImportError:
     pass
 from six.moves import zip
@@ -643,8 +644,9 @@ class Datacube(object):
             use_threads = False
 
         if use_threads:
-            pool = ThreadPool(32)
+            pool = ThreadPool(cpu_count()*2)
             results = pool.map(work_measurements, measurements, repeat(data_func))
+
         else:
             results = [data_func(a) for a in measurements]
 
@@ -738,7 +740,7 @@ class Datacube(object):
                     data = sa.attach(array_name)
                     data[:] = measurement['nodata']
 
-                    pool = ThreadPool(32)
+                    pool = ThreadPool(cpu_count()*2)
                     pool.map(work_load_data, repeat(array_name), *zip(*numpy.ndenumerate(sources.values)))
                     sa.delete(array_name)
                 return data

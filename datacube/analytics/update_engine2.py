@@ -19,7 +19,7 @@ class UpdateActions(Enum):
 
 class UpdateEngineV2(object):
 
-    def __init__(self, config):
+    def __init__(self, config=None):
         '''Initialise the update engine.'''
         # For now, this is not inheriting Worker since it would create a Datacube object and offer
         # methods that may not get used

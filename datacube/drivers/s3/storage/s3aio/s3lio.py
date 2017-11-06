@@ -17,6 +17,7 @@ from six import integer_types
 from six.moves import map, zip
 from itertools import repeat, product
 from pathos.multiprocessing import ProcessingPool
+from pathos.threading import ThreadPool
 from pathos.multiprocessing import freeze_support, cpu_count
 try:
     from StringIO import StringIO
@@ -29,7 +30,7 @@ class S3LIO(object):
 
     DECIMAL_PLACES = 6
 
-    def __init__(self, enable_compression=True, enable_s3=True, file_path=None, num_workers=30):
+    def __init__(self, enable_compression=True, enable_s3=True, file_path=None, num_workers=cpu_count()*2):
         """Initialise the S3 Labeled IO interface.
 
         :param bool enable_s3: Flag to store objects in s3 or disk.
@@ -387,7 +388,7 @@ class S3LIO(object):
         # element_ids = [np.ravel_multi_index(tuple([s.start for s in s]), macro_shape) for s in slices]
         def work_data_unlabeled(array_name, s3_key, data_slice, local_slice, shape, offset):
             result = sa.attach(array_name)
-            result[data_slice] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key)
+            result[data_slice] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key, True)
 
         keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
             self.build_chunk_list(base_location, macro_shape, micro_shape, dtype, array_slice, use_hash)
@@ -399,7 +400,6 @@ class S3LIO(object):
 
         self.pool.map(work_data_unlabeled, repeat(array_name), keys, data_slices, local_slices, chunk_shapes,
                       repeat(offset))
-
         sa.delete(array_name)
 
         return data

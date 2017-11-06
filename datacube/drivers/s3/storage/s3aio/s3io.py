@@ -16,6 +16,7 @@ import errno
 import uuid
 import boto3
 import boto3.session
+from boto3.s3.transfer import TransferConfig
 import botocore
 import SharedArray as sa
 import numpy as np
@@ -24,6 +25,7 @@ from operator import mul
 from os.path import expanduser
 from itertools import repeat
 from pathos.multiprocessing import ProcessingPool
+from pathos.helpers import cpu_count
 
 try:
     from StringIO import StringIO
@@ -37,9 +39,13 @@ class S3IO(object):
     """low level S3 byte IO interface.
     """
 
+    # TODO: move boto3.session from Sig v2 to Sig v4 format and specify region,
+    #       and store region of s3 bucket in postgres on ingest.
+    #       this is confirmed to restores performance post boto3 > 1.4.3
+
     # enable_s3: True = reads/writes to s3
     # enable_s3: False = reads/writes to disk ***for testing only***
-    def __init__(self, enable_s3=True, file_path=None, num_workers=30):
+    def __init__(self, enable_s3=True, file_path=None, num_workers=cpu_count()*2):
         """Initialise the low level S3 byte IO interface.
 
         :param bool enable_s3: Flag to store objects in s3 or disk.
@@ -442,7 +448,7 @@ class S3IO(object):
                                                                 MultipartUpload=parts_dict)
         return mpu_response
 
-    def get_bytes(self, s3_bucket, s3_key, new_session=False):
+    def get_bytes(self, s3_bucket, s3_key, new_session=False, use_new=False):
         """Gets bytes from a S3 object
 
         :param str s3_bucket: name of the s3 bucket.
@@ -453,17 +459,32 @@ class S3IO(object):
         :return: Requested bytes
         """
         if self.enable_s3:
-            while True:
-                s3 = self.s3_resource(new_session)
-                b = s3.Bucket(s3_bucket)
-                o = b.Object(s3_key)
-                try:
-                    d = o.get()['Body'].read()
-                    # d = np.frombuffer(d, dtype=np.uint8, count=-1, offset=0)
-                    return d
-                except botocore.exceptions.ClientError as e:
+            # TODO: check and move to download_fileobj and upload_fileobj for transfers.
+            #       similar performance as existing approach
+            if use_new:
+                s3 = boto3.client('s3')
+                byte_buffer = io.BytesIO()
+                # example config
+                transfer_config = TransferConfig(multipart_chunksize=8*1024*1024, multipart_threshold=8*1024*1024,
+                                                 max_concurrency=10)
+                s3.download_fileobj(s3_bucket, s3_key, byte_buffer, Config=transfer_config)
+                return byte_buffer.getvalue()
+            else:
+                while True:
+                    s3 = self.s3_resource(new_session)
+                    b = s3.Bucket(s3_bucket)
+                    o = b.Object(s3_key)
+
+                    #self.get_byte_range_mp(s3_bucket, s3_key, s3_start, s3_end, block_size, new_session)
+                    try:
+                        #s3_end = o.get()['ContentLength']
+                        #d = self.get_byte_range_mp(s3_bucket, s3_key, 0, s3_end, 10*1024*1024, new_session)
+                        d = o.get()['Body'].read()
+                        # d = np.frombuffer(d, dtype=np.uint8, count=-1, offset=0)
+                        return d
+                    except botocore.exceptions.ClientError as e:
+                        break
                     break
-                break
         else:
             directory = self.file_path+"/"+str(s3_bucket)
             if not os.path.exists(directory):

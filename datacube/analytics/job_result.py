@@ -269,7 +269,7 @@ class LazyArray(object):
             for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
                 required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
                 idx = (name,) + np.unravel_index(chunk_id, chunk_shape)
-                s3lio = S3LIO(True, use_s3, None, 30)
+                s3lio = S3LIO(True, use_s3, None)
                 dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
 
             return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
@@ -282,7 +282,7 @@ class LazyArray(object):
             use_s3 = True
             if self._type == ResultTypes.FILE:
                 use_s3 = False
-            s3lio = S3LIO(True, use_s3, None, 30)
+            s3lio = S3LIO(True, use_s3, None)
             keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
                 s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice, False)
 
