@@ -38,6 +38,21 @@ class MetadataTypeResource(object):
         """
         self._db = db
 
+        self.get_unsafe = lru_cache()(self.get_unsafe)
+        self.get_by_name_unsafe = lru_cache()(self.get_by_name_unsafe)
+
+    def __getstate__(self):
+        """
+        We define getstate/setstate to avoid pickling the caches
+        """
+        return self._db,
+
+    def __setstate__(self, state):
+        """
+        We define getstate/setstate to avoid pickling the caches
+        """
+        self.__init__(*state)
+
     def from_doc(self, definition):
         """
         :param dict definition:
@@ -138,7 +153,6 @@ class MetadataTypeResource(object):
 
         _LOG.info("Updating metadata type %s", metadata_type.name)
 
-
         with self._db.connect() as connection:
             connection.update_metadata_type(
                 name=metadata_type.name,
@@ -180,7 +194,8 @@ class MetadataTypeResource(object):
         except KeyError:
             return None
 
-    @lru_cache()
+    # This is memoized in the constructor
+    # pylint: disable=method-hidden
     def get_unsafe(self, id_):
         with self._db.connect() as connection:
             record = connection.get_metadata_type(id_)
@@ -188,7 +203,8 @@ class MetadataTypeResource(object):
             raise KeyError('%s is not a valid MetadataType id')
         return self._make_from_query_row(record)
 
-    @lru_cache()
+    # This is memoized in the constructor
+    # pylint: disable=method-hidden
     def get_by_name_unsafe(self, name):
         with self._db.connect() as connection:
             record = connection.get_metadata_type_by_name(name)
@@ -267,6 +283,21 @@ class ProductResource(object):
         """
         self._db = db
         self.metadata_type_resource = metadata_type_resource
+
+        self.get_unsafe = lru_cache()(self.get_unsafe)
+        self.get_by_name_unsafe = lru_cache()(self.get_by_name_unsafe)
+
+    def __getstate__(self):
+        """
+        We define getstate/setstate to avoid pickling the caches
+        """
+        return self._db, self.metadata_type_resource
+
+    def __setstate__(self, state):
+        """
+        We define getstate/setstate to avoid pickling the caches
+        """
+        self.__init__(*state)
 
     def from_doc(self, definition):
         """
@@ -468,7 +499,7 @@ class ProductResource(object):
 
     def add_document(self, definition):
         """
-        Add a Product using its difinition
+        Add a Product using its definition
 
         :param dict definition: product definition document
         :rtype: DatasetType
@@ -500,7 +531,8 @@ class ProductResource(object):
         except KeyError:
             return None
 
-    @lru_cache()
+    # This is memoized in the constructor
+    # pylint: disable=method-hidden
     def get_unsafe(self, id_):
         with self._db.connect() as connection:
             result = connection.get_dataset_type(id_)
@@ -508,7 +540,8 @@ class ProductResource(object):
             raise KeyError('"%s" is not a valid Product id' % id_)
         return self._make(result)
 
-    @lru_cache()
+    # This is memoized in the constructor
+    # pylint: disable=method-hidden
     def get_by_name_unsafe(self, name):
         with self._db.connect() as connection:
             result = connection.get_dataset_type_by_name(name)
@@ -1041,15 +1074,18 @@ class DatasetResource(object):
             for dataset in self._make_many(connection.search_datasets_by_metadata(metadata)):
                 yield dataset
 
-    def search(self, **query):
+    def search(self, limit=None, **query):
         """
         Perform a search, returning results as Dataset objects.
 
         :param dict[str,str|float|Range] query:
+        :param int limit:
         :rtype: __generator[Dataset]
         """
         source_filter = query.pop('source_filter', None)
-        for _, datasets in self._do_search_by_product(query, source_filter=source_filter):
+        for _, datasets in self._do_search_by_product(query,
+                                                      source_filter=source_filter,
+                                                      limit=limit):
             for dataset in self._make_many(datasets):
                 yield dataset
 
@@ -1177,8 +1213,11 @@ class DatasetResource(object):
             q['dataset_type_id'] = product.id
             yield q, product
 
+    # pylint: disable=too-many-locals
     def _do_search_by_product(self, query, return_fields=False, select_field_names=None,
-                              with_source_ids=False, source_filter=None):
+                              with_source_ids=False, source_filter=None,
+                              limit=None):
+
         if source_filter:
             product_queries = list(self._get_product_queries(source_filter))
             if not product_queries:
@@ -1195,36 +1234,38 @@ class DatasetResource(object):
             source_exprs = None
 
         product_queries = list(self._get_product_queries(query))
-        with self._db.connect() as connection:
-            for q, product in product_queries:
-                dataset_fields = product.metadata_type.dataset_fields
-                query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
-                select_fields = None
-                if return_fields:
-                    # if no fields specified, select all
-                    if select_field_names is None:
-                        select_fields = tuple(field for name, field in dataset_fields.items()
-                                              if not field.affects_row_selection)
-                    else:
-                        select_fields = tuple(dataset_fields[field_name]
-                                              for field_name in select_field_names)
+        for q, product in product_queries:
+            dataset_fields = product.metadata_type.dataset_fields
+            query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+            select_fields = None
+            if return_fields:
+                # if no fields specified, select all
+                if select_field_names is None:
+                    select_fields = tuple(field for name, field in dataset_fields.items()
+                                          if not field.affects_row_selection)
+                else:
+                    select_fields = tuple(dataset_fields[field_name]
+                                          for field_name in select_field_names)
+            with self._db.connect() as connection:
                 yield (product,
                        connection.search_datasets(
                            query_exprs,
                            source_exprs,
                            select_fields=select_fields,
+                           limit=limit,
                            with_source_ids=with_source_ids
                        ))
 
     def _do_count_by_product(self, query):
         product_queries = self._get_product_queries(query)
-        with self._db.connect() as connection:
-            for q, product in product_queries:
-                dataset_fields = product.metadata_type.dataset_fields
-                query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+
+        for q, product in product_queries:
+            dataset_fields = product.metadata_type.dataset_fields
+            query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+            with self._db.connect() as connection:
                 count = connection.count_datasets(query_exprs)
-                if count > 0:
-                    yield product, count
+            if count > 0:
+                yield product, count
 
     def _do_time_count(self, period, query, ensure_single=False):
         if 'time' not in query:
@@ -1243,10 +1284,10 @@ class DatasetResource(object):
                 raise ValueError('Multiple products match single query search: %r' %
                                  ([dt.name for q, dt in product_queries],))
 
-        with self._db.connect() as connection:
-            for q, product in product_queries:
-                dataset_fields = product.metadata_type.dataset_fields
-                query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+        for q, product in product_queries:
+            dataset_fields = product.metadata_type.dataset_fields
+            query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+            with self._db.connect() as connection:
                 yield product, list(connection.count_datasets_through_time(
                     start,
                     end,
