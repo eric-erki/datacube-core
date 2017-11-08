@@ -188,6 +188,8 @@ def pass_index(app_name=None, expect_initialised=True):
                 index = index_connect(ctx.obj.get('config_file') if ctx.obj else None,
                                       application_name=app_name or ctx.command_path,
                                       validate_connection=expect_initialised)
+                if not ctx.obj:
+                    ctx.obj = {}
                 ctx.obj['index'] = index
                 _LOG.debug("Connected to datacube index: %s", index)
                 return f(index, *args, **kwargs)
