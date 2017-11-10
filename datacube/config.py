@@ -187,7 +187,7 @@ class LocalConfig(object):
     def execution_engine_config(self):
         return {
             'result_bucket': self._environment_prop('execution_engine.result_bucket'),
-            'use_s3': self._environment_prop('execution_engine.use_s3')
+            'use_s3': self._environment_prop('execution_engine.use_s3') == 'True'
         }
 
     @property

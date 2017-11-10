@@ -197,7 +197,7 @@ class AnalyticsEngineV2(Worker):
         for band in bands:
             descriptors[band] = {
                 'type': result_type,
-                'load_type': LoadType.DASK,
+                'load_type': LoadType.EAGER,
                 'base_name': None,  # Not yet known
                 'bucket': self._ee_config['result_bucket'],
                 'shape': None,  # Not yet known
