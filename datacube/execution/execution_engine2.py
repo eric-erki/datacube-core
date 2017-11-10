@@ -92,7 +92,7 @@ class ExecutionEngineV2(Worker):
             array = computed[array_name]
             # Update result descriptor based on processed data
             self.update_result_descriptor(descriptor, array.shape, array.dtype)
-            self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'])
+            self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
         self.job_finishes(job)
 
         return computed

@@ -48,6 +48,9 @@ redis.db: 1
 redis_celery.host: 127.0.0.1
 redis_celery.port: 6379
 redis_celery.db: 2
+
+execution_engine.result_bucket: eetest2
+execution_engine.use_s3: False
 """
 
 
@@ -178,6 +181,13 @@ class LocalConfig(object):
             'db': db,
             'password': password,
             'url': url
+        }
+
+    @property
+    def execution_engine_config(self):
+        return {
+            'result_bucket': self._environment_prop('execution_engine.result_bucket'),
+            'use_s3': self._environment_prop('execution_engine.use_s3')
         }
 
     @property

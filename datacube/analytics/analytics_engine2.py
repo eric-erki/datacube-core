@@ -189,13 +189,17 @@ class AnalyticsEngineV2(Worker):
     def _create_result_descriptors(self, bands, chunk):
         '''Create mock result descriptors.'''
         # == Mock implementation ==
+        if self._ee_config['use_s3']:
+            result_type = ResultTypes.S3IO
+        else:
+            result_type = ResultTypes.FILE
         descriptors = {}
         for band in bands:
             descriptors[band] = {
-                'type': ResultTypes.FILE,
-                'load_type': LoadType.EAGER,
+                'type': result_type,
+                'load_type': LoadType.DASK,
                 'base_name': None,  # Not yet known
-                'bucket': 'eetest',
+                'bucket': self._ee_config['result_bucket'],
                 'shape': None,  # Not yet known
                 'chunk': chunk,
                 'dtype': None  # Not yet known

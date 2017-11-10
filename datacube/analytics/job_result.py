@@ -34,7 +34,7 @@ Note: Interim JobResult Code for incremental testing:
         - Proper EE
 """
 
-from __future__ import absolute_import, print_function
+from __future__ import absolute_import, print_function, division
 
 import numpy as np
 from six import integer_types
@@ -189,12 +189,8 @@ class LazyArray(object):
     # TODO(csiro):
     #     - embed this in s3io library and use s3io lazy array object
     #       - array wrapper around s3lio.get_data_unlabeled
-    #     - make this class lazy via Dask.
 
     _id = 0
-
-    # chunk cache {chunk_id: bytes}
-    _cache = {}
 
     def __init__(self, array_info, driver_manager=None):
         """Initialise the array with array_info:
@@ -206,7 +202,7 @@ class LazyArray(object):
         self._id = self._array_info['id']
         self._type = self._array_info['type']
         self._load_type = self._array_info['load_type']
-        self._query = {}
+        self._cache = {}
 
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             self._base_name = self._array_info['base_name']
@@ -252,7 +248,14 @@ class LazyArray(object):
         """
         return self._id
 
-     # pylint: disable=too-many-locals, too-many-branches
+    def clear_cache(self):
+        self._cache = {}
+
+    def set_mode(self, mode):
+        if mode in LoadType:
+            self._load_type = mode
+
+    # pylint: disable=too-many-locals, too-many-branches
     def __getitem__(self, slices):
         """Slicing operator to retrieve data stored on S3/DataCube
         Todo:
@@ -268,7 +271,7 @@ class LazyArray(object):
             name = zipped[0][0]
             for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
                 required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
-                idx = (name,) + np.unravel_index(chunk_id, chunk_shape)
+                idx = (name,) + np.unravel_index(chunk_id, [int(np.ceil(s/c)) for s, c in zip(shape, chunks)])
                 s3lio = S3LIO(True, use_s3, None)
                 dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
 
@@ -289,19 +292,19 @@ class LazyArray(object):
             zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
 
             if self._load_type == LoadType.EAGER:
-                return xr.DataArray(s3lio.get_data_unlabeled(self._base_name, self._shape, self._chunk, self._dtype,
-                                                             bounded_slice, self._bucket))
+                return xr.DataArray(s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
+                                                                bounded_slice, self._bucket))
             elif self._load_type == LoadType.EAGER_CACHED:
                 missing_chunks = []
                 for a in zipped:
                     if a[5] not in self._cache:
                         missing_chunks.append(a)
 
-                received_chunks = s3lio.get_data_full_chunks_unlabeled(missing_chunks, self._dtype, self._bucket)
-                # do mp version
+                if missing_chunks:
+                    received_chunks = s3lio.get_data_full_chunks_unlabeled_mp(missing_chunks, self._dtype, self._bucket)
 
-                if received_chunks:
-                    self._cache.update(received_chunks)
+                    if received_chunks:
+                        self._cache.update(received_chunks)
 
                 # build array from cache and return
                 data = np.zeros(shape=[s.stop - s.start for s in bounded_slice], dtype=self._dtype)

@@ -19,6 +19,7 @@ class Worker(object):
         self._driver_manager = DriverManager(local_config=config.datacube_config)
         self._datacube = Datacube(driver_manager=self._driver_manager)
         self._store = StoreHandler(**config.redis_config)
+        self._ee_config = config.execution_engine_config
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object

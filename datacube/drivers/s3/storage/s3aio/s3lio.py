@@ -323,6 +323,22 @@ class S3LIO(object):
             slices[cid] = self.s3aio.get_slice_by_bbox(full_slice, shape, dtype, s3_bucket, s3_key)
         return slices
 
+    # pylint: disable=too-many-locals
+    def get_data_full_chunks_unlabeled_mp(self, chunks, dtype, s3_bucket):
+
+        def work_get_data_full_chunks_unlabeled(dtype, s3_bucket, s3_key, data_slice, local_slice, shape, offset, cid):
+            full_slice = ()
+            for i in shape:
+                full_slice += (slice(0, i),)
+            return {cid: self.s3aio.get_slice_by_bbox(full_slice, shape, dtype, s3_bucket, s3_key)}
+
+        results = self.pool.map(work_get_data_full_chunks_unlabeled, repeat(dtype), repeat(s3_bucket), *zip(*chunks))
+
+        results_dict = {}
+        for r in results:
+            results_dict.update(r)
+        return results_dict
+
     def get_data_single_chunks_unlabeled(self, chunks, dtype, s3_bucket):
         for s3_key, data_slice, local_slice, shape, offset, cid in chunks:
             full_slice = ()
