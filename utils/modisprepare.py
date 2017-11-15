@@ -72,13 +72,13 @@ def fill_image_data(doc, granule_path):
             for band, suffix in enumerate(['iso', 'vol', 'geo'], 1):
                 bands[band_name + '_' + suffix] = {
                     'band': band,
-                    'path': granule_path.name,
+                    'path': str(granule_path),
                     'layer': layer
                 }
 
         else:
             bands[band_name] = {
-                'path': granule_path.name,
+                'path': str(granule_path),
                 'layer': layer
             }
     del gran_file
