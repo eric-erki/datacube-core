@@ -352,14 +352,17 @@ def absolutify_paths(doc, path):
     for band in doc['image']['bands'].values():
         band['path'] = str(path / band['path'])
     return doc
+
+
 def archive_yaml(yaml_path, output):
     """
     Archives the input file to the output destination
-    """   
+    """
     archive_path = os.path.join(output, "archive")
     if not os.path.exists(archive_path):
         os.makedirs(archive_path)
     os.rename(yaml_path, (os.path.join(archive_path, os.path.basename(yaml_path))))
+
 
 @click.command(help=__doc__)
 @click.option('--output', help="Write datasets into this directory",

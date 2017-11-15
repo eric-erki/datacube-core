@@ -26,6 +26,7 @@ from datetime import datetime
 from dateutil import parser
 from click_datetime import Datetime
 
+
 def get_coords(geo_ref_points, spatial_ref):
     """
     Returns transformed coordinates in latitude and longitude from input
@@ -163,15 +164,17 @@ def absolutify_paths(doc, path):
         band['path'] = str(path / band['path'])
     return doc
 
+
 def archive_yaml(yaml_path, output):
     """
     Archives the input file to the output destination
-    """   
+    """
     archive_path = os.path.join(output, "archive")
     if not os.path.exists(archive_path):
         os.makedirs(archive_path)
     os.rename(yaml_path, (os.path.join(archive_path, os.path.basename(yaml_path))))
-                
+
+
 @click.command(help=__doc__)
 @click.option('--output', help="Write datasets into this directory",
               type=click.Path(exists=False, writable=True, dir_okay=True))
@@ -182,7 +185,6 @@ def archive_yaml(yaml_path, output):
               help="Enter file creation start date for data preparation")
 @click.option('--checksum/--no-checksum', help="Checksum the input dataset to confirm match",
               default=False)
-
 def main(output, datasets, checksum, date):
     logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
 
@@ -210,7 +212,7 @@ def main(output, datasets, checksum, date):
                             yaml_sha1 = data['checksum_sha1']
                             checksum_sha1 = hashlib.sha1(open(path, 'rb').read()).hexdigest()
                         if checksum_sha1 == yaml_sha1:
-                            #Only checksum the xml - not the HDF format
+                            # Only checksum the xml - not the HDF format
                             logging.info("Dataset preparation already done...SKIPPING")
                             continue
                         else:
@@ -226,7 +228,7 @@ def main(output, datasets, checksum, date):
                     yaml.dump_all(documents, stream)
             else:
                 logging.info("No datasets discovered. Bye!")
-    
+
 
 if __name__ == "__main__":
     main()
