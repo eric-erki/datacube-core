@@ -352,7 +352,14 @@ def absolutify_paths(doc, path):
     for band in doc['image']['bands'].values():
         band['path'] = str(path / band['path'])
     return doc
-
+def archive_yaml(yaml_path, output):
+    """
+    Archives the input file to the output destination
+    """   
+    archive_path = os.path.join(output, "archive")
+    if not os.path.exists(archive_path):
+        os.makedirs(archive_path)
+    os.rename(yaml_path, (os.path.join(archive_path, os.path.basename(yaml_path))))
 
 @click.command(help=__doc__)
 @click.option('--output', help="Write datasets into this directory",
@@ -370,7 +377,7 @@ def main(output, datasets, checksum, date):
         (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(dataset)
         create_date = datetime.utcfromtimestamp(ctime)
         if create_date <= date:
-            logging.info("Dataset creation time ", create_date, " is older than start date ", date, "...SKIPPING")
+            logging.info("Dataset creation time "+str(create_date)+" is older than start date "+str(date)+"...SKIPPING")
         else:
             path = Path(dataset)
             if path.is_dir():
@@ -393,6 +400,9 @@ def main(output, datasets, checksum, date):
                         if checksum_sha1 == yaml_sha1:
                             logging.info("Dataset preparation already done...SKIPPING")
                             continue
+                        else:
+                            logging.info("Dataset has changed...ARCHIVING out of date yaml")
+                            archive_yaml(yaml_path, output)
                     else:
                         logging.info("Dataset preparation already done...SKIPPING")
                         continue
