@@ -95,4 +95,4 @@ class ExecutionEngineV2(Worker):
             self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
         self.job_finishes(job)
 
-        return computed
+        return 'Job Complete'

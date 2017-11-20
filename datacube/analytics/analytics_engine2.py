@@ -6,7 +6,6 @@ from pprint import pformat
 from six.moves import zip
 
 from .worker import Worker
-from .base_job_monitor import BaseJobMonitor
 from datacube.engine_common.store_handler import FunctionTypes, ResultTypes, ResultMetadata
 from datacube.analytics.job_result import JobResult, LoadType
 
@@ -62,13 +61,7 @@ class AnalyticsEngineV2(Worker):
         # Run the base job
         self.job_starts(decomposed['base'])
 
-        # Create a thread to monitor job completion, until it gets implemented in the coming months.
-        base_job_monitor = BaseJobMonitor(self, self._store, self._driver_manager, decomposed)
-        base_job_monitor.monitor_completion()
-
-        return (decomposed['jobs'],
-                self._get_jro_params(decomposed['base']),
-                decomposed['base']['result_descriptors'])
+        return (self._get_jro_params(decomposed['base']), decomposed)
 
     def _determine_function_type(self, func):
         '''Determine the type of a function.'''

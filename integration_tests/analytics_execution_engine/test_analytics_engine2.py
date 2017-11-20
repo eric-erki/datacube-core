@@ -115,17 +115,11 @@ def check_submit_job(store_handler, redis_config, local_config, driver_manager):
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(base_function, data, storage_params={'chunk': (1, 231, 420)})
 
-    # TODO: remove when results are not returned any more
-    for result_p in results:
-        result = result_p.get(disable_sync_subtasks=False)
-        assert result.red.shape == (1, 231, 420)
-        assert result.blue.shape == (1, 231, 420)
-
     # Wait a while for the main job to complete
     for tstep in range(30):
         if jro.job.status == JobStatuses.COMPLETED:
             break
-        sleep(0.1)
+        sleep(0.5)
     assert jro.job.status == JobStatuses.COMPLETED
     jro.update()
 
@@ -198,17 +192,11 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(band_transform, data_desc, storage_params={'chunk': (1, 231, 420)})
 
-    # TODO: remove when results are not returned any more
-    for result_p in results:
-        result = result_p.get(disable_sync_subtasks=False)
-        assert result.red.shape == (1, 231, 420)
-        assert result.blue.shape == (1, 231, 420)
-
     # Wait a while for the main job to complete
     for tstep in range(30):
         if jro.job.status == JobStatuses.COMPLETED:
             break
-        sleep(0.1)
+        sleep(0.5)
     assert jro.job.status == JobStatuses.COMPLETED
 
     print('Before JRO update', jro.results.red['shape'])

@@ -45,7 +45,7 @@ class S3IO(object):
 
     # enable_s3: True = reads/writes to s3
     # enable_s3: False = reads/writes to disk ***for testing only***
-    def __init__(self, enable_s3=True, file_path=None, num_workers=cpu_count()*2):
+    def __init__(self, enable_s3=True, file_path=None, num_workers=cpu_count()):
         """Initialise the low level S3 byte IO interface.
 
         :param bool enable_s3: Flag to store objects in s3 or disk.

@@ -13,6 +13,7 @@ from celery import Celery
 
 from .analytics_engine2 import AnalyticsEngineV2
 from .update_engine2 import UpdateEngineV2
+from .base_job_monitor import BaseJobMonitor
 from datacube.execution.execution_engine2 import ExecutionEngineV2
 from datacube.config import LocalConfig
 
@@ -36,7 +37,8 @@ def celery_app(store_config=None):
     _app.conf.update(
         task_serializer='pickle',
         result_serializer='pickle',
-        accept_content=['pickle'])
+        accept_content=['pickle'],
+        worker_prefetch_multiplier=1)
     return _app
 
 
@@ -75,7 +77,7 @@ def launch_worker_thread(url):
     """Only used for pytests"""
     app.conf.update(result_backend=url,
                     broker_url=url)
-    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'DEBUG', '--autoscale=1,0']
+    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'DEBUG', '--autoscale=2,0']
     app.worker_main(argv)
 
 
@@ -90,10 +92,11 @@ def run_python_function_base(function, data, storage_params=None, *args, **kwarg
     analytics_engine = AnalyticsEngineV2(config)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
-    jobs, jro, base_results = analytics_engine.analyse(function, data, storage_params, *args, **kwargs)
+    jro, decomposed = analytics_engine.analyse(function, data, storage_params, *args, **kwargs)
+    monitor_jobs.delay(decomposed)
     results = []
-    for job in jobs:
-        results.append(run_python_function_subjob.delay(job, base_results, *args, **kwargs))
+    for job in decomposed['jobs']:
+        results.append(run_python_function_subjob.delay(job, decomposed['base']['result_descriptors'], *args, **kwargs))
     return (jro, results)
 
 
@@ -105,6 +108,13 @@ def run_python_function_subjob(job, base_results, *args, **kwargs):
         raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
     result = execution_engine.execute(job, base_results, *args, **kwargs)
     return result
+
+
+@app.task
+def monitor_jobs(decomposed):
+    '''Monitors base job.'''
+    base_job_monitor = BaseJobMonitor(config, decomposed)
+    base_job_monitor.monitor_completion()
 
 
 @app.task

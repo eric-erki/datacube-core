@@ -25,7 +25,7 @@ from .s3io import S3IO
 
 class S3AIO(object):
 
-    def __init__(self, enable_compression=True, enable_s3=True, file_path=None, num_workers=cpu_count()*2):
+    def __init__(self, enable_compression=True, enable_s3=True, file_path=None, num_workers=cpu_count()):
         """Initialise the S3 array IO interface.
 
         :param bool enable_s3: Flag to store objects in s3 or disk.
