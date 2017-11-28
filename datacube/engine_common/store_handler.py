@@ -84,9 +84,6 @@ class StoreHandler(object):
     K_STATS = 'stats'
     K_LOGS = 'logs'
     K_STATS_STATUS = 'status'
-    # pylint: disable=not-an-iterable
-    K_LISTS = {status: status.name.lower() for status in JobStatuses}
-    '''Job lists.'''
 
     def __init__(self, **redis_config):
         '''Initialise the data store interface.'''
@@ -103,7 +100,7 @@ class StoreHandler(object):
 
     def _make_list_key(self, key, status):
         '''Build a redis key for a specific item status list.'''
-        return self._make_key(key, self.K_LISTS[status])
+        return self._make_key(key, status.name.lower())
 
     def _make_stats_key(self, key, item_id):
         '''Build a redis key for a specific item stats.'''
@@ -161,7 +158,7 @@ class StoreHandler(object):
                                   self.K_STATS_STATUS)
         if not status:
             raise ValueError('Unknown id: {}'.format(item_id))
-        return JobStatuses(int(status))
+        return status
 
     def _set_item_status(self, key, item_id, new_status):
         '''Set the status of an item.'''
@@ -286,7 +283,7 @@ class StoreHandler(object):
 
     def get_job_status(self, job_id):
         '''Retrieve the status of a job.'''
-        return self._get_item_status(self.K_JOBS, job_id)
+        return JobStatuses(int(self._get_item_status(self.K_JOBS, job_id)))
 
     def set_job_status(self, job_id, status):
         '''Changes the status of a job.'''
@@ -299,7 +296,7 @@ class StoreHandler(object):
 
     def get_result_status(self, result_id):
         '''Retrieve the status of a single result.'''
-        return self._get_item_status(self.K_RESULTS, result_id)
+        return JobStatuses(int(self._get_item_status(self.K_RESULTS, result_id)))
 
     def set_result_status(self, result_id, status):
         '''Changes the status of a single result.'''
@@ -379,23 +376,25 @@ class StoreHandler(object):
         return 'Store keys: {}'.format(
             sorted([key.decode('utf-8') for key in self._store.keys()]))
 
-    def _decode_string(self, key, value):
+    def _decode_string(self, value, key=None):
         '''Helper function for str_dump. Do not call directly.'''
         try:
             value = value.decode('utf-8')
         except ValueError:
             value = loads(value)
-            if isinstance(value, (ResultMetadata, JobMetadata, FunctionMetadata)):
+            if hasattr(value, '__dict__'):
                 value = '{}: {{{}}}'.format(
                     type(value).__name__,
                     ','.join(['{}: {}'.format(k, v.__name__ if callable(v) else v)
                               for k, v in value.__dict__.items()]))
-        return '{}: {}'.format(key.decode('utf-8'), value)
+        if key:
+            return '{}: {}'.format(key.decode('utf-8'), value)
+        return str(value)
 
     def _decode_list(self, key, value):
         '''Helper function for str_dump. Do not call directly.'''
         return '{}: [{}]'.format(key.decode('utf-8'),
-                                 ', '.join([val.decode('utf-8') for val in value]))
+                                 ', '.join([self._decode_string(val) for val in value]))
 
     def str_dump(self):
         '''Return a simple string dump of the store, for debugging only.'''
@@ -403,13 +402,12 @@ class StoreHandler(object):
         for key in sorted(self._store.keys()):
             val_type = self._store.type(key)
             if val_type == b'string':
-                output.append(self._decode_string(key, self._store.get(key)))
+                output.append(self._decode_string(self._store.get(key), key))
             elif val_type == b'hash':
                 output.append('{}:'.format(key.decode('utf-8')))
                 for skey in self._store.hkeys(key):
                     output.append(' - {}'.format(self._decode_string(
-                        skey,
-                        self._store.hget(key, skey))))
+                        self._store.hget(key, skey), skey)))
             elif val_type == b'list':
                 output.append(self._decode_list(key, self._store.lrange(key, 0, -1)))
             else:

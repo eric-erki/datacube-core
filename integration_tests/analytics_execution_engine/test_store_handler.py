@@ -1,7 +1,4 @@
 '''Test the store handler by flushing it, then writing and reading from it.
-
-CAUTION: The database with the last possible index (typically 15) in the store is used. If it ever
-contains any data, that gets wiped out!
 '''
 
 from __future__ import absolute_import
@@ -30,12 +27,9 @@ def get_all_lists(store_handler):
 
 @pytest.fixture(scope='module')
 def store_handler(redis_config):
-    '''Connect to the store and flushes the last DB.
+    '''Connect to the store and flushes the DB.
 
-    CAUTION: The database with the last possible index (typically 15) in the store is used. If it
-    contains any data, that gets wiped out!
-
-    That DB gets wiped again at the end of the tests.
+    The DB gets flushed again at the end of the tests.
     '''
     store_handler = StoreHandler(**redis_config)
     yield store_handler
