@@ -25,7 +25,7 @@ def product():
 @click.option('--allow-exclusive-lock/--forbid-exclusive-lock', is_flag=True, default=False,
               help='Allow index to be locked from other users while updating (default: false)')
 @click.argument('files',
-                type=click.Path(exists=True, readable=True, writable=False),
+                type=ui.PathlibPath(exists=True, readable=True, writable=False),
                 nargs=-1)
 @ui.pass_index()
 def add_dataset_types(index, allow_exclusive_lock, files):
@@ -33,7 +33,7 @@ def add_dataset_types(index, allow_exclusive_lock, files):
     """
     Add or update products in the generic index.
     """
-    for descriptor_path, parsed_doc in read_documents(*(Path(f) for f in files)):
+    for descriptor_path, parsed_doc in read_documents(files):
         try:
             type_ = index.products.from_doc(parsed_doc)
             index.products.add(type_, allow_table_lock=allow_exclusive_lock)
@@ -54,10 +54,10 @@ def add_dataset_types(index, allow_exclusive_lock, files):
 @click.option('--dry-run', '-d', is_flag=True, default=False,
               help='Check if everything is ok')
 @click.argument('files',
-                type=click.Path(exists=True, readable=True, writable=False),
+                type=ui.PathlibPath(exists=True, readable=True, writable=False),
                 nargs=-1)
 @ui.pass_index()
-def update_dataset_types(index, allow_unsafe, allow_exclusive_lock, dry_run, files):
+def update_products(index, allow_unsafe, allow_exclusive_lock, dry_run, files):
     # type: (Index, bool, bool, bool, list) -> None
     """
     Update existing products.
@@ -68,7 +68,7 @@ def update_dataset_types(index, allow_unsafe, allow_exclusive_lock, dry_run, fil
     incompatible with existing datasets of that type)
     """
     failures = 0
-    for descriptor_path, parsed_doc in read_documents(*(Path(f) for f in files)):
+    for descriptor_path, parsed_doc in read_documents(files):
         try:
             type_ = index.products.from_doc(parsed_doc)
         except InvalidDocException as e:

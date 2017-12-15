@@ -76,7 +76,7 @@ def create_dataset(dataset_doc, uri, rules):
 
 
 def load_rules_from_file(filename, index):
-    rules = next(read_documents(Path(filename)))[1]
+    rules = next(read_documents(filename))[1]
     # TODO: verify schema
 
     for rule in rules:
@@ -149,7 +149,7 @@ def parse_match_rules_options(index, match_rules, dtype, auto_match):
 
 @dataset_cmd.command('add', help="Add datasets to the Data Cube")
 @click.option('--match-rules', '-r', help='Rules to be used to associate datasets with products',
-              type=click.Path(exists=True, readable=True, writable=False, dir_okay=False))
+              type=ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False))
 @click.option('--dtype', '-t', help='Product to be associated with the datasets',
               multiple=True)
 @click.option('--auto-match', '-a', help="Automatically associate datasets with products by matching metadata",
@@ -160,7 +160,7 @@ def parse_match_rules_options(index, match_rules, dtype, auto_match):
 'skip' - dont add the derived dataset if source dataset doesn't exist""")
 @click.option('--dry-run', help='Check if everything is ok', is_flag=True, default=False)
 @click.argument('dataset-paths',
-                type=click.Path(exists=True, readable=True, writable=False), nargs=-1)
+                type=ui.PathlibPath(exists=True, readable=True, writable=False), nargs=-1)
 @ui.pass_index()
 def index_cmd(index, match_rules, dtype, auto_match, sources_policy, dry_run, dataset_paths):
     rules = parse_match_rules_options(index, match_rules, dtype, auto_match)
@@ -195,13 +195,13 @@ def parse_update_rules(allow_any):
 @dataset_cmd.command('update', help="Update datasets in the Data Cube")
 @click.option('--allow-any', help="Allow any changes to the specified key (a.b.c)", multiple=True)
 @click.option('--match-rules', '-r', help='Rules to be used to associate datasets with products',
-              type=click.Path(exists=True, readable=True, writable=False, dir_okay=False))
+              type=ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False))
 @click.option('--dtype', '-t', help='Product to be associated with the datasets', multiple=True)
 @click.option('--auto-match', '-a', help="Automatically associate datasets with products by matching metadata",
               is_flag=True, default=False)
 @click.option('--dry-run', help='Check if everything is ok', is_flag=True, default=False)
 @click.argument('datasets',
-                type=click.Path(exists=True, readable=True, writable=False), nargs=-1)
+                type=ui.PathlibPath(exists=True, readable=True, writable=False), nargs=-1)
 @ui.pass_index()
 def update_cmd(index, allow_any, match_rules, dtype, auto_match, dry_run, datasets):
     rules = parse_match_rules_options(index, match_rules, dtype, auto_match)

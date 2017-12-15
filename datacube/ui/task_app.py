@@ -86,13 +86,13 @@ def load_tasks(taskfile):
 # This is a function, so it's valid to be lowercase.
 #: pylint: disable=invalid-name
 app_config_option = click.option('--app-config', help='App configuration file',
-                                 type=click.Path(exists=True, readable=True, writable=False, dir_okay=False))
+                                 type=dc_ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False))
 #: pylint: disable=invalid-name
 load_tasks_option = click.option('--load-tasks', 'input_tasks_file', help='Load tasks from the specified file',
-                                 type=click.Path(exists=True, readable=True, writable=False, dir_okay=False))
+                                 type=dc_ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False))
 #: pylint: disable=invalid-name
 save_tasks_option = click.option('--save-tasks', 'output_tasks_file', help='Save tasks to the specified file',
-                                 type=click.Path(exists=False))
+                                 type=dc_ui.PathlibPath(exists=False))
 #: pylint: disable=invalid-name
 queue_size_option = click.option('--queue-size', help='Number of tasks to queue at the start',
                                  type=click.IntRange(1, 100000), default=3200)

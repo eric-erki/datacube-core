@@ -11,6 +11,7 @@ import copy
 import sys
 
 import click
+from click._compat import filename_to_ui
 
 from datacube import config, __version__
 from datacube.api.core import Datacube
@@ -310,6 +311,84 @@ def to_pathlib(ctx, param, value):
         return None
 
 
+class PathlibPath(click.ParamType):
+    """A parameter which accepts a file or directory name and performs
+    checks on it.  First of all, instead of returning an open file
+    handle it returns just the filename.  Secondly, it can perform various
+    basic checks about what the file or directory should be.
+
+    Very similar to :class:`click.Path`, but returns a :class:`pathlib.Path`.
+
+    :param exists: if set to true, the file or directory needs to exist for
+                   this value to be valid.  If this is not required and a
+                   file does indeed not exist, then all further checks are
+                   silently skipped.
+    :param file_okay: controls if a file is a possible value.
+    :param dir_okay: controls if a directory is a possible value.
+    :param writable: if true, a writable check is performed.
+    :param readable: if true, a readable check is performed.
+    :param resolve_path: if this is true, then the path is fully resolved
+                         before the value is passed onwards.  This means
+                         that it's absolute and symlinks are resolved.
+    """
+    def __init__(self, exists=False, file_okay=True, dir_okay=True,
+                 writable=False, readable=True, resolve_path=False):
+        self.exists = exists
+        self.file_okay = file_okay
+        self.dir_okay = dir_okay
+        self.writable = writable
+        self.readable = readable
+        self.resolve_path = resolve_path
+
+        if self.file_okay and not self.dir_okay:
+            self.name = 'file'
+            self.path_type = 'File'
+        if self.dir_okay and not self.file_okay:
+            self.name = 'directory'
+            self.path_type = 'Directory'
+        else:
+            self.name = 'path'
+            self.path_type = 'Path'
+
+    def convert(self, value, param, ctx):
+        rv = Path(value)
+
+        if self.resolve_path:
+            rv = rv.resolve()
+
+        if not self.exists:
+            return rv
+
+        if self.exists and not rv.exists():
+            self.fail('%s "%s" does not exist.' % (
+                self.path_type,
+                filename_to_ui(value)
+            ), param, ctx)
+
+        if not self.file_okay and rv.is_file():
+            self.fail('%s "%s" is a file.' % (
+                self.path_type,
+                filename_to_ui(value)
+            ), param, ctx)
+        if not self.dir_okay and rv.is_dir():
+            self.fail('%s "%s" is a directory.' % (
+                self.path_type,
+                filename_to_ui(value)
+            ), param, ctx)
+        if self.writable and not os.access(value, os.W_OK):
+            self.fail('%s "%s" is not writable.' % (
+                self.path_type,
+                filename_to_ui(value)
+            ), param, ctx)
+        if self.readable and not os.access(value, os.R_OK):
+            self.fail('%s "%s" is not readable.' % (
+                self.path_type,
+                filename_to_ui(value)
+            ), param, ctx)
+
+        return rv
+
+
 def parsed_search_expressions(f):
     """
     Add [expression] arguments and --crs option to a click application
@@ -319,7 +398,7 @@ def parsed_search_expressions(f):
 
     Also appends documentation on using search expressions to the command.
 
-    WARNING: This wrapped expects an unlimited number of search expressions
+    WARNING: This wrapper expects an unlimited number of search expressions
     as click arguments, which means your command must take only click options
     or a specified number of arguments.
     """

@@ -327,14 +327,14 @@ def _validate_year(ctx, param, value):
 
 @cli.command('ingest', help="Ingest datasets")
 @click.option('--config-file', '-c',
-              type=click.Path(exists=True, readable=True, writable=False, dir_okay=False),
+              type=ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False),
               help='Ingest configuration file')
 @click.option('--year', callback=_validate_year, help='Limit the process to a particular year')
 @click.option('--queue-size', type=click.IntRange(1, 100000), default=3200, help='Task queue size')
 @click.option('--save-tasks', help='Save tasks to the specified file',
-              type=click.Path(exists=False))
+              type=ui.PathlibPath(exists=False))
 @click.option('--load-tasks', help='Load tasks from the specified file',
-              type=click.Path(exists=True, readable=True, writable=False, dir_okay=False))
+              type=ui.PathlibPath(exists=True, readable=True, writable=False, dir_okay=False))
 @click.option('--dry-run', '-d', is_flag=True, default=False, help='Check if everything is ok')
 @click.option('--allow-product-changes', is_flag=True, default=False,
               help='Allow the output product definition to be updated if it differs.')
