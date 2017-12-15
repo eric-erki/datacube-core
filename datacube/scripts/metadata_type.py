@@ -32,7 +32,7 @@ def add_metadata_types(index, allow_exclusive_lock, files):
     """
     Add or update metadata types in the index
     """
-    for descriptor_path, parsed_doc in read_documents(files):
+    for descriptor_path, parsed_doc in read_documents(*files):
         try:
             type_ = index.metadata_types.from_doc(parsed_doc)
             index.metadata_types.add(type_, allow_table_lock=allow_exclusive_lock)
@@ -65,7 +65,7 @@ def update_metadata_types(index, allow_unsafe, allow_exclusive_lock, dry_run, fi
     (An unsafe change is anything that may potentially make the metadata type
     incompatible with existing ones of the same name)
     """
-    for descriptor_path, parsed_doc in read_documents(files):
+    for descriptor_path, parsed_doc in read_documents(*files):
         try:
             type_ = index.metadata_types.from_doc(parsed_doc)
         except InvalidDocException as e:

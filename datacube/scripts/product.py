@@ -33,7 +33,7 @@ def add_dataset_types(index, allow_exclusive_lock, files):
     """
     Add or update products in the generic index.
     """
-    for descriptor_path, parsed_doc in read_documents(files):
+    for descriptor_path, parsed_doc in read_documents(*files):
         try:
             type_ = index.products.from_doc(parsed_doc)
             index.products.add(type_, allow_table_lock=allow_exclusive_lock)
@@ -68,7 +68,7 @@ def update_products(index, allow_unsafe, allow_exclusive_lock, dry_run, files):
     incompatible with existing datasets of that type)
     """
     failures = 0
-    for descriptor_path, parsed_doc in read_documents(files):
+    for descriptor_path, parsed_doc in read_documents(*files):
         try:
             type_ = index.products.from_doc(parsed_doc)
         except InvalidDocException as e:
