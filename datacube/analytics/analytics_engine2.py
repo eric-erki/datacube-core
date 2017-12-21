@@ -7,6 +7,7 @@ from six.moves import zip
 
 from .worker import Worker
 from datacube.engine_common.store_handler import FunctionTypes, ResultTypes, ResultMetadata
+from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.job_result import JobResult, LoadType
 
 
@@ -28,6 +29,9 @@ class AnalyticsEngineV2(Worker):
         'chunk': None,
         'ttl': -1
     }
+
+    def __init__(self, name, config=None):
+        super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, config)
 
     def analyse(self, function, data, storage_params, *args, **kwargs):
         '''user - job submit

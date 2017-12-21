@@ -4,6 +4,7 @@
 from __future__ import absolute_import
 
 import logging
+from time import time
 from enum import Enum, IntEnum
 from collections import OrderedDict
 
@@ -63,6 +64,13 @@ class ResultMetadata(object):
             raise ValueError('Invalid result type: {}'.format(result_type))
         self.result_type = result_type
         self.descriptor = descriptor
+
+
+class LogObject(object):
+    '''Timestamping logs.'''
+    def __init__(self, message):
+        self.message = message
+        self.timestamp = time()
 
 
 class KeyConcurrencyError(Exception):
@@ -192,7 +200,7 @@ class StoreHandler(object):
         The new logs get pickled an appended to the current list of item logs.
         '''
         self._store.rpush(self._make_logs_key(key, str(item_id)),
-                          dumps(logs, byref=True))
+                          dumps(LogObject(logs), byref=True))
 
     def _get_item_logs(self, key, item_id):
         '''Return the list of item logs.
@@ -385,8 +393,8 @@ class StoreHandler(object):
             if hasattr(value, '__dict__'):
                 value = '{}: {{{}}}'.format(
                     type(value).__name__,
-                    ','.join(['{}: {}'.format(k, v.__name__ if callable(v) else v)
-                              for k, v in value.__dict__.items()]))
+                    ', '.join(['{}: {}'.format(k, v.__name__ if callable(v) else v)
+                               for k, v in value.__dict__.items()]))
         if key:
             return '{}: {}'.format(key.decode('utf-8'), value)
         return str(value)

@@ -4,6 +4,7 @@ from time import sleep
 from threading import Thread
 
 from .worker import Worker
+from datacube.engine_common.store_workers import WorkerTypes
 from datacube.engine_common.store_handler import JobStatuses
 
 
@@ -13,8 +14,8 @@ class BaseJobMonitor(Worker):
     perform monitoring at the proper times.
     """
 
-    def __init__(self, config, decomposed):
-        super(BaseJobMonitor, self).__init__(config)
+    def __init__(self, name, config, decomposed):
+        super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, config)
         self._decomposed = decomposed
 
     def wait_for_workers(self):

@@ -5,6 +5,7 @@ import numpy as np
 import zstd
 from cloudpickle import loads
 
+from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.worker import Worker
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
@@ -29,6 +30,9 @@ class ExecutionEngineV2(Worker):
 
     State & Health tracking are tracked via redis state/health store.
     """
+
+    def __init__(self, name, config=None):
+        super(ExecutionEngineV2, self).__init__(name, WorkerTypes.EXECUTION, config)
 
     def _analyse(self, function, data, storage_params, *args, **kwargs):
         """stub to call _decompose to perform data decomposition if required"""

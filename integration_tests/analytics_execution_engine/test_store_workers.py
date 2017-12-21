@@ -31,7 +31,7 @@ def workers_metadata():
     return workers
 
 
-class LogObject(object):
+class DummyLogObject(object):
     '''A dummy user-defined worker logs object.'''
     def __init__(self, base_str, num_logs):
         self._logs = ['{} #{:03d}'.format(base_str, i) for i in range(num_logs)]
@@ -114,7 +114,7 @@ def test_worker_logs(store_workers, workers_metadata):
         '''Test longer
         log text.''',
         999.999,
-        LogObject('Test log object', 10)
+        DummyLogObject('Test log object', 10)
     ]
     # Add the logs
     for log in logs:
@@ -123,7 +123,7 @@ def test_worker_logs(store_workers, workers_metadata):
     retrieved = store_workers.get_worker_logs(worker_id)
     assert len(retrieved) == len(logs)
     for log_no, log in enumerate(logs):
-        retrieved[log_no] == log
+        assert retrieved[log_no].message == log
 
 
 def test_health(store_workers, workers_metadata):

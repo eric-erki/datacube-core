@@ -212,6 +212,7 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
 
     # Leave time for workers to complete their tasks then flush the store
     sleep(0.4)
+    print('Store dump\n{}'.format(client._store.str_dump()))
     store_handler._store.flushdb()
 
 

@@ -3,23 +3,27 @@ handle job and result lifecycle in the store.'''
 
 from __future__ import absolute_import, print_function
 
+from time import time
 import logging
 
 from datacube.drivers.manager import DriverManager
 from datacube import Datacube
-from datacube.engine_common.store_handler import StoreHandler, JobStatuses, ResultMetadata
+from datacube.engine_common.store_handler import JobStatuses, ResultMetadata
+from datacube.engine_common.store_workers import StoreWorkers, WorkerMetadata, WorkerStatuses
 from datacube.config import LocalConfig
 
 
 class Worker(object):
-    def __init__(self, config=None):
+    def __init__(self, name, worker_type, config=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         if not config:
             config = LocalConfig.find()
         self._driver_manager = DriverManager(local_config=config.datacube_config)
         self._datacube = Datacube(driver_manager=self._driver_manager)
-        self._store = StoreHandler(**config.redis_config)
+        self._store = StoreWorkers(**config.redis_config)
         self._ee_config = config.execution_engine_config
+        self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),
+                                          WorkerStatuses.ALIVE)
 
     def update_result_descriptor(self, descriptor, shape, dtype):
         # Update memory object
@@ -45,9 +49,10 @@ class Worker(object):
         job_id = job['id']
         # Start job
         self._store.set_job_status(job_id, JobStatuses.RUNNING)
-        self.logger.debug('Job {:03d} ({}) is now {}'
-                          .format(job_id, self.__class__.__name__,
-                                  self._store.get_job_status(job_id).name))
+        message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,
+                                                     self._store.get_job_status(job_id).name)
+        self._store.add_worker_logs(self._id, message)
+        self.logger.debug(message)
         # Start combined result
         self.result_starts(job, job['result_id'])
         # Start individual results
@@ -64,22 +69,27 @@ class Worker(object):
         self.result_finishes(job, job['result_id'])
         # Stop job
         self._store.set_job_status(job_id, JobStatuses.COMPLETED)
-        self.logger.debug('Job {:03d} ({}) is now {}'
-                          .format(job_id, self.__class__.__name__,
-                                  self._store.get_job_status(job_id).name))
+        message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,
+                                                     self._store.get_job_status(job_id).name)
+        self._store.add_worker_logs(self._id, message)
+        self.logger.debug(message)
 
     def result_starts(self, job, result_id):
         '''Set result to running status.'''
         job_id = job['id']
         self._store.set_result_status(result_id, JobStatuses.RUNNING)
-        self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                          .format(job_id, result_id, self.__class__.__name__,
-                                  self._store.get_result_status(result_id).name))
+        message = 'Result {:03d}-{:03d} ({}) is now {}'.format(
+            job_id, result_id, self.__class__.__name__,
+            self._store.get_result_status(result_id).name)
+        self._store.add_worker_logs(self._id, message)
+        self.logger.debug(message)
 
     def result_finishes(self, job, result_id):
         '''Set result to completed status.'''
         job_id = job['id']
         self._store.set_result_status(result_id, JobStatuses.COMPLETED)
-        self.logger.debug('Result {:03d}-{:03d} ({}) is now {}'
-                          .format(job_id, result_id, self.__class__.__name__,
-                                  self._store.get_result_status(result_id).name))
+        message = 'Result {:03d}-{:03d} ({}) is now {}'.format(
+            job_id, result_id, self.__class__.__name__,
+            self._store.get_result_status(result_id).name)
+        self._store.add_worker_logs(self._id, message)
+        self.logger.debug(message)

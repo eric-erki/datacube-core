@@ -89,7 +89,7 @@ def stop_worker():
 @app.task
 def run_python_function_base(function, data, storage_params=None, *args, **kwargs):
     '''Process the function and data submitted by the user.'''
-    analytics_engine = AnalyticsEngineV2(config)
+    analytics_engine = AnalyticsEngineV2('Analytics Engine', config)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
     jro, decomposed = analytics_engine.analyse(function, data, storage_params, *args, **kwargs)
@@ -103,7 +103,7 @@ def run_python_function_base(function, data, storage_params=None, *args, **kwarg
 @app.task
 def run_python_function_subjob(job, base_results, *args, **kwargs):
     '''Process a subjob, created by the base job.'''
-    execution_engine = ExecutionEngineV2(config)
+    execution_engine = ExecutionEngineV2('Execution Engine', config)
     if not execution_engine:
         raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
     result = execution_engine.execute(job, base_results, *args, **kwargs)
@@ -113,7 +113,7 @@ def run_python_function_subjob(job, base_results, *args, **kwargs):
 @app.task
 def monitor_jobs(decomposed):
     '''Monitors base job.'''
-    base_job_monitor = BaseJobMonitor(config, decomposed)
+    base_job_monitor = BaseJobMonitor('Base Job Monitor', config, decomposed)
     base_job_monitor.monitor_completion()
 
 

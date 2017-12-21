@@ -14,7 +14,8 @@ class WorkerTypes(Enum):
     '''Valid worker types.'''
     ANALYSIS = 1
     EXECUTION = 2
-    OTHER = 3
+    MONITOR = 3
+    OTHER = 4
 
 class WorkerStatuses(IntEnum):
     '''Valid worker statuses.
