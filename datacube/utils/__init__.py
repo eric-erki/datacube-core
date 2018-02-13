@@ -12,7 +12,6 @@ import json
 import logging
 import pathlib
 import re
-from future.utils import raise_from
 from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, date
@@ -267,22 +266,23 @@ def read_documents(*paths):
                     for parsed_doc in yaml.load_all(handle, Loader=NoDatesSafeLoader):
                         yield path, parsed_doc
             except yaml.YAMLError as e:
-                raise InvalidDocException('Failed to load %s: %s' % (path, e))
+                raise InvalidDocException('Failed to load %s: %s' % (path, e)) from e
         elif suffix == '.json':
             try:
                 with opener(str(path), 'r') as handle:
                     yield path, json.load(handle)
             except ValueError as e:
-                raise InvalidDocException('Failed to load %s: %s' % (path, e))
+                raise InvalidDocException('Failed to load %s: %s' % (path, e)) from e
         elif suffix == '.nc':
             try:
                 for doc in read_strings_from_netcdf(path, variable='dataset'):
                     yield path, yaml.load(doc, Loader=NoDatesSafeLoader)
             except Exception as e:
-                raise InvalidDocException('Unable to load dataset information from NetCDF file: %s. %s' % (path, e))
+                raise InvalidDocException('Unable to load dataset information from NetCDF file: %s. %s'
+                                          % (path, e)) from e
         else:
             raise ValueError('Unknown document type for {}; expected one of {!r}.'
-                             .format(path.name, _ALL_SUPPORTED_EXTENSIONS))
+                             .format(path.name, _ALL_SUPPORTED_EXTENSIONS)) from e
 
 
 def netcdf_extract_string(chars):
@@ -329,7 +329,7 @@ def validate_document(document, schema, schema_folder=None):
         validator = jsonschema.Draft4Validator(schema, resolver=ref_resolver)
         validator.validate(document)
     except jsonschema.ValidationError as e:
-        raise_from(InvalidDocException(), e)
+        raise InvalidDocException() from e
 
 
 # TODO: Replace with Pandas
