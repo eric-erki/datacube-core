@@ -33,14 +33,19 @@ def add_dataset_types(index, allow_exclusive_lock, files):
     """
     Add or update products in the generic index.
     """
-    for descriptor_path, parsed_doc in read_documents(*(Path(f) for f in files)):
+    parsed_documents = list(read_documents(*(Path(f) for f in files)))
+    echo('Found {} product documents to add.'.format(len(parsed_documents)))
+    for descriptor_path, parsed_doc in parsed_documents:
+        if not parsed_doc:
+            echo('Skipping empty document.')
+            continue
         try:
             type_ = index.products.from_doc(parsed_doc)
             index.products.add(type_, allow_table_lock=allow_exclusive_lock)
             echo('Added "%s"' % type_.name)
         except InvalidDocException as e:
             _LOG.exception(e)
-            _LOG.error('Invalid product definition: %s', descriptor_path)
+            _LOG.error('Invalid product definition found in: %s', descriptor_path)
             continue
 
 

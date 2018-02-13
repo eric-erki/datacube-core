@@ -1,6 +1,6 @@
 # coding=utf-8
 """
-Utility functions used in storage modules
+Utility functions used throughout the code base.
 """
 from __future__ import absolute_import, division, print_function
 
@@ -12,6 +12,7 @@ import json
 import logging
 import pathlib
 import re
+from future.utils import raise_from
 from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, date
@@ -328,7 +329,7 @@ def validate_document(document, schema, schema_folder=None):
         validator = jsonschema.Draft4Validator(schema, resolver=ref_resolver)
         validator.validate(document)
     except jsonschema.ValidationError as e:
-        raise InvalidDocException(e)
+        raise_from(InvalidDocException(), e)
 
 
 # TODO: Replace with Pandas
