@@ -234,6 +234,7 @@ class LazyArray(object):
             }
         elif self._type == ResultTypes.INDEXED:
             return {'query': self._query}
+        return {}
 
     def __repr__(self):
         return self.__str__()
@@ -454,3 +455,4 @@ class Results(object):
             return self._datasets[key]
         else:
             print("Variable not found")
+            return None
