@@ -21,7 +21,6 @@ addons:
   postgresql: "9.5"
   services:
     - postgresql
-    - redis-server
   apt:
     sources:
       - sourceline: ppa:nextgis/ppa
@@ -30,6 +29,9 @@ addons:
       - libgdal-dev
       - libgdal20
       - libudunits2-0
+
+services:
+  - redis-server
 
 before_install:
 # Create a database for the integration tests.
@@ -56,6 +58,9 @@ install:
 # Check disk usage
   - df -h
   - df -i
+
+before_script:
+  - redis-cli info
 
 script:
 # Ensure we are running against the correct python version
