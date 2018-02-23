@@ -57,9 +57,6 @@ install:
   - df -h
   - df -i
 
-before_script:
-  - redis-cli info
-
 script:
 # Ensure we are running against the correct python version
   - '[[ $(python --version 2>&1) == *"$TRAVIS_PYTHON_VERSION"* ]]'
