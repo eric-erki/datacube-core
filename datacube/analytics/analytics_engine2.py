@@ -9,6 +9,7 @@ from .worker import Worker
 from datacube.engine_common.store_handler import FunctionTypes, ResultTypes, ResultMetadata
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.job_result import JobResult, LoadType
+from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
 class AnalyticsEngineV2(Worker):
@@ -149,9 +150,8 @@ class AnalyticsEngineV2(Worker):
         # == Partial implementation ==
         # TODO: Add a loop: for dataset in datasets...
         metadata = self._datacube.metadata_for_load(**data)
-        storage = self._driver_manager.drivers['s3'].storage
         total_shape = metadata['grouped'].shape + metadata['geobox'].shape
-        _, indices, chunk_ids = storage.create_indices(total_shape, storage_params['chunk'], '^_^')
+        _, indices, chunk_ids = S3LIO().create_indices(total_shape, storage_params['chunk'], '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)

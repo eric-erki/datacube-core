@@ -23,7 +23,7 @@ from datacube.api.core import Datacube
 redis = pytest.importorskip('redis')
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def store_handler(redis_config):
     '''Connect to the store and flushes the last DB.
 
@@ -59,15 +59,15 @@ def user_data():
 
 
 @pytest.fixture(scope='session')
-def ee_celery(local_config, request):
-    thread = launch_ae_worker(local_config)
+def ee_celery(ee_config):
+    thread = launch_ae_worker(ee_config)
     yield
     print('Teardown celery')
     stop_worker()
     thread.join()
 
 
-def _test_submit_invalid_job(store_handler, redis_config, local_config, driver_manager, ee_celery):
+def _test_submit_invalid_job(store_handler, redis_config, local_config, index, ee_celery):
     '''
     Test for failure of job submission when passing insufficient data or wrong type
     '''
@@ -85,7 +85,7 @@ def _test_submit_invalid_job(store_handler, redis_config, local_config, driver_m
     store_handler._store.flushdb()
 
 
-def check_submit_job(store_handler, redis_config, local_config, driver_manager):
+def check_submit_job(store_handler, redis_config, local_config, index):
     '''Test the following:
         - the submission of a job with real data
         - decomposition
@@ -148,7 +148,7 @@ def check_submit_job(store_handler, redis_config, local_config, driver_manager):
     assert(returned_calc.shape == (1, 231, 420))
 
     # Retrieve data directly and check that results are same as data
-    dc = Datacube(driver_manager=driver_manager)
+    dc = Datacube(index=index)
     data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
     np.testing.assert_array_equal(returned_calc.values, data_array.red.values)
 
@@ -165,7 +165,7 @@ def check_submit_job(store_handler, redis_config, local_config, driver_manager):
     store_handler._store.flushdb()
 
 
-def check_do_the_math(store_handler, redis_config, local_config, driver_manager):
+def check_do_the_math(store_handler, redis_config, local_config, index):
     """
     Submit a function that does something
     """
@@ -206,7 +206,7 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
     returned_calc = jro.results.red[:]
 
     # Retrieve data directly and check that bands are transformed
-    dc = Datacube(driver_manager=driver_manager)
+    dc = Datacube(index=index)
     data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
     np.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
 
@@ -216,9 +216,9 @@ def check_do_the_math(store_handler, redis_config, local_config, driver_manager)
     store_handler._store.flushdb()
 
 
-def test_submit_invalid_update(local_config):
+def test_submit_invalid_update(ee_config):
     '''Test for failure of jro updates when passing insufficient data or wrong type.'''
-    updater = UpdateEngineV2(local_config)
+    updater = UpdateEngineV2(ee_config)
     # Submit invalid action type
     with pytest.raises(ValueError):
         updater.execute(1, 3)

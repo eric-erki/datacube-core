@@ -30,10 +30,14 @@ config = None
 
 
 def celery_app(store_config=None):
-    if store_config is None:
-        local_config = LocalConfig.find()
-        store_config = local_config.redis_celery_config
-    _app = Celery('ee_task', broker=store_config['url'], backend=store_config['url'])
+    try:
+        if store_config is None:
+            local_config = LocalConfig.find()
+            store_config = local_config.redis_celery_config
+        _app = Celery('ee_task', broker=store_config['url'], backend=store_config['url'])
+    except ValueError:
+        _app = Celery('ee_task')
+
     _app.conf.update(
         task_serializer='pickle',
         result_serializer='pickle',

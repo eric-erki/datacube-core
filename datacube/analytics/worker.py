@@ -6,7 +6,6 @@ from __future__ import absolute_import, print_function
 from time import time
 import logging
 
-from datacube.drivers.manager import DriverManager
 from datacube import Datacube
 from datacube.engine_common.store_handler import JobStatuses, ResultMetadata
 from datacube.engine_common.store_workers import StoreWorkers, WorkerMetadata, WorkerStatuses
@@ -18,8 +17,7 @@ class Worker(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         if not config:
             config = LocalConfig.find()
-        self._driver_manager = DriverManager(local_config=config.datacube_config)
-        self._datacube = Datacube(driver_manager=self._driver_manager)
+        self._datacube = Datacube(config=config)
         self._store = StoreWorkers(**config.redis_config)
         self._ee_config = config.execution_engine_config
         self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),

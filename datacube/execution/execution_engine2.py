@@ -49,8 +49,7 @@ class ExecutionEngineV2(Worker):
         else:
             metadata = self._datacube.metadata_for_load(**query)
             return self._datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
-                                            metadata['measurements_values'].values(),
-                                            driver_manager=self._driver_manager, use_threads=True)
+                                            metadata['measurements_values'].values(), use_threads=True)
 
     def _compute_result(self, function, data):
         '''Run the function on the data.'''
