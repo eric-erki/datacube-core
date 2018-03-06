@@ -25,7 +25,7 @@ from boto3.s3.transfer import TransferConfig
 import botocore
 import numpy as np
 import sys
-from pathos.multiprocessing import ProcessingPool
+from pathos.multiprocessing import ProcessPool
 from pathos.helpers import cpu_count
 from six.moves import reduce, zip
 
@@ -58,7 +58,7 @@ class S3IO(object):
         else:
             self.file_path = file_path
 
-        self.pool = ProcessingPool(num_workers)
+        self.pool = ProcessPool(num_workers)
 
     def list_created_arrays(self):
         """List the created shared memory arrays.

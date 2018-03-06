@@ -5,6 +5,7 @@ import numpy as np
 import zstd
 from cloudpickle import loads
 
+from datacube import Datacube
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.worker import Worker
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
@@ -32,7 +33,7 @@ class ExecutionEngineV2(Worker):
     """
 
     def __init__(self, name, config=None):
-        super(ExecutionEngineV2, self).__init__(name, WorkerTypes.EXECUTION, config)
+        super(ExecutionEngineV2, self).__init__(name, WorkerTypes.EXECUTION, config, dc=False)
 
     def _analyse(self, function, data, storage_params, *args, **kwargs):
         """stub to call _decompose to perform data decomposition if required"""
@@ -42,14 +43,14 @@ class ExecutionEngineV2(Worker):
         """further data decomposition to suit compute node"""
         pass
 
-    def _get_data(self, query, chunk=None):
+    def _get_data(self, metadata, chunk=None):
         '''Retrieves data for the worker.'''
         if chunk is None:
-            return self._datacube.load(use_threads=True, **query)
+            return Datacube.load_data(metadata['grouped'], metadata['geobox'],
+                                      metadata['measurements_values'].values(), use_threads=True)
         else:
-            metadata = self._datacube.metadata_for_load(**query)
-            return self._datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
-                                            metadata['measurements_values'].values(), use_threads=True)
+            return Datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
+                                      metadata['measurements_values'].values(), use_threads=True)
 
     def _compute_result(self, function, data):
         '''Run the function on the data.'''
@@ -69,14 +70,14 @@ class ExecutionEngineV2(Worker):
             data = bytes(np.ascontiguousarray(array).data)
         data = cctx.compress(data)
         s3io = S3IO(use_s3, None)
-        s3io.put_bytes(result_descriptor['bucket'], s3_key, data)
+        s3io.put_bytes(result_descriptor['bucket'], s3_key, data, True)
 
     def execute(self, job, base_results, *args, **kwargs):
         '''Start the job, save results, then set it as completed.'''
         self.job_starts(job)
 
         # Get data for worker here
-        data = self._get_data(job['data']['query'], job['slice'])
+        data = self._get_data(job['data']['metadata'], job['slice'])
         if not set(data.data_vars) == set(job['result_descriptors'].keys()):
             raise ValueError('Inconsistent variables in data and result descriptors:\n{} vs. {}'.format(
                 set(data.data_vars), set(job['result_descriptors'].keys())))

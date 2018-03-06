@@ -15,7 +15,7 @@ import numpy as np
 from six import integer_types
 from six.moves import map, zip
 from itertools import repeat, product
-from pathos.multiprocessing import ProcessingPool
+from pathos.multiprocessing import ProcessPool
 from pathos.threading import ThreadPool
 from pathos.multiprocessing import freeze_support, cpu_count
 
@@ -41,10 +41,11 @@ class S3LIO(object):
         """
         self.s3aio = S3AIO(enable_compression, enable_s3, file_path, num_workers)
 
-        self.pool = ProcessingPool(num_workers)
+        self.pool = ProcessPool(num_workers)
         self.enable_compression = enable_compression
 
-    def chunk_indices_1d(self, begin, end, step, bound_slice=None, return_as_shape=False):
+    @staticmethod
+    def chunk_indices_1d(begin, end, step, bound_slice=None, return_as_shape=False):
         """Chunk a 1D index.
 
         :param int begin: Start of index range.
@@ -72,7 +73,8 @@ class S3LIO(object):
                 else:
                     yield slice(max(i, bound_begin), min(end, i + step))
 
-    def chunk_indices_nd(self, shape, chunk, array_slice=None, return_as_shape=False):
+    @staticmethod
+    def chunk_indices_nd(shape, chunk, array_slice=None, return_as_shape=False):
         """Chunk a nD index.
 
         :param tuple shape: Shape of the index
@@ -83,10 +85,11 @@ class S3LIO(object):
         """
         if array_slice is None:
             array_slice = repeat(None)
-        var1 = map(self.chunk_indices_1d, repeat(0), shape, chunk, array_slice, repeat(return_as_shape))
+        var1 = map(S3LIO.chunk_indices_1d, repeat(0), shape, chunk, array_slice, repeat(return_as_shape))
         return product(*var1)
 
-    def create_indices(self, shape, chunk_size, base_name, spread=False):
+    @staticmethod
+    def create_indices(shape, chunk_size, base_name, spread=False):
         """Create indices for simple array structure.
 
         :param tuple shape: shape of the array
@@ -97,7 +100,7 @@ class S3LIO(object):
         """
         if chunk_size is None:
             chunk_size = shape
-        idx = list(self.chunk_indices_nd(shape, chunk_size))
+        idx = list(S3LIO.chunk_indices_nd(shape, chunk_size))
         chunk_ids = [i for i in range(len(idx))]
         keys = [base_name + '_' + str(i) for i in chunk_ids]
         if spread:
@@ -419,6 +422,7 @@ class S3LIO(object):
 
         self.pool.map(work_data_unlabeled, repeat(array_name), keys, data_slices, local_slices, chunk_shapes,
                       repeat(offset))
+
         sa.delete(array_name)
 
         return data

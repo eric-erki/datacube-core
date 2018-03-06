@@ -60,11 +60,10 @@ def user_data():
 
 @pytest.fixture(scope='session')
 def ee_celery(ee_config):
-    thread = launch_ae_worker(ee_config)
+    process = launch_ae_worker(ee_config)
     yield
     print('Teardown celery')
-    stop_worker()
-    thread.join()
+    process.terminate()
 
 
 def _test_submit_invalid_job(store_handler, redis_config, local_config, index, ee_celery):
@@ -85,7 +84,7 @@ def _test_submit_invalid_job(store_handler, redis_config, local_config, index, e
     store_handler._store.flushdb()
 
 
-def check_submit_job(store_handler, redis_config, local_config, index):
+def check_submit_job(store_handler, local_config, index):
     '''Test the following:
         - the submission of a job with real data
         - decomposition
@@ -112,6 +111,7 @@ def check_submit_job(store_handler, redis_config, local_config, index):
         'y': (-35.32, -35.28)
     }
     client = AnalyticsClient(local_config)
+    client.update_config(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(base_function, data, storage_params={'chunk': (1, 231, 420)})
 
@@ -165,7 +165,7 @@ def check_submit_job(store_handler, redis_config, local_config, index):
     store_handler._store.flushdb()
 
 
-def check_do_the_math(store_handler, redis_config, local_config, index):
+def check_do_the_math(store_handler, local_config, index):
     """
     Submit a function that does something
     """
@@ -189,6 +189,7 @@ def check_do_the_math(store_handler, redis_config, local_config, index):
         'y': (-35.32, -35.28)
     }
     client = AnalyticsClient(local_config)
+    client.update_config(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
     jro, results = client.submit_python_function(band_transform, data_desc, storage_params={'chunk': (1, 231, 420)})
 

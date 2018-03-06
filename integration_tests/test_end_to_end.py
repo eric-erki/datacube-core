@@ -56,8 +56,9 @@ ignore_me = pytest.mark.xfail(True, reason="get_data/get_description still to be
 
 
 @pytest.mark.usefixtures('default_metadata_type')
-@pytest.mark.parametrize('datacube_env_name', ('datacube', ), indirect=True)
-def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
+@pytest.mark.parametrize('datacube_env_name', ('datacube', 's3aio_env', ), indirect=True)
+def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_handler,
+                       local_config, ee_celery, datacube_env_name):
     """
     Loads two dataset configurations, then ingests a sample Landsat 5 scene
 
@@ -67,7 +68,6 @@ def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
     The input dataset should be recorded in the index, and two sets of storage units
     should be created on disk and recorded in the index.
     """
-
     lbg_nbar = testdata_dir / 'lbg' / LBG_NBAR
     lbg_pq = testdata_dir / 'lbg' / LBG_PQ
     ls5_nbar_albers_ingest_config = testdata_dir / ingest_configs['ls5_nbar_albers']
@@ -89,6 +89,7 @@ def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
     # Ingest PQ
     clirunner(['-v', 'ingest', '-c', str(ls5_pq_albers_ingest_config)])
 
+    # ODC API
     check_open_with_api(index)
     check_open_with_dc(index)
     check_open_with_grid_workflow(index)
@@ -103,57 +104,9 @@ def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
     check_analytics_ndvi_mask_median_expression_storage_type(index)
     check_analytics_pixel_drill(index)
 
-
-@pytest.mark.usefixtures('default_metadata_type')
-@pytest.mark.parametrize('datacube_env_name', ('s3aio_env', ), indirect=True)
-def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_handler, redis_config,
-                       local_config, ee_celery):
-    """
-    Loads two dataset configurations, then ingests a sample Landsat 5 scene
-
-    One dataset configuration specifies Australian Albers Equal Area Projection,
-    the other is simply latitude/longitude.
-
-    The input dataset should be recorded in the index, and two sets of storage units
-    should be created on disk and recorded in the index.
-    """
-
-    lbg_nbar = testdata_dir / 'lbg' / LBG_NBAR
-    lbg_pq = testdata_dir / 'lbg' / LBG_PQ
-    ls5_nbar_albers_ingest_config = testdata_dir / ingest_configs['ls5_nbar_albers']
-    ls5_pq_albers_ingest_config = testdata_dir / ingest_configs['ls5_pq_albers']
-
-    # Run galsprepare.py on the NBAR and PQ scenes
-    assert_click_command(galsprepare.main, [str(lbg_nbar)])
-
-    # Add the LS5 Dataset Types
-    clirunner(['-v', 'product', 'add', str(LS5_DATASET_TYPES)])
-
-    # Index the Datasets
-    clirunner(['-v', 'dataset', 'add', '--auto-match',
-               str(lbg_nbar), str(lbg_pq)])
-
-    # Ingest NBAR
-    clirunner(['-v', 'ingest', '-c', str(ls5_nbar_albers_ingest_config)])
-
-    # Ingest PQ
-    clirunner(['-v', 'ingest', '-c', str(ls5_pq_albers_ingest_config)])
-
-    check_open_with_api(index)
-    check_open_with_dc(index)
-    check_open_with_grid_workflow(index)
-    check_analytics_list_searchables(index)
-    check_get_descriptor(index)
-    check_get_data(index)
-    check_get_data_subset(index)
-    check_get_descriptor_data(index)
-    check_get_descriptor_data_storage_type(index)
-    check_analytics_create_array(index)
-    check_analytics_ndvi_mask_median_expression(index)
-    check_analytics_ndvi_mask_median_expression_storage_type(index)
-    check_analytics_pixel_drill(index)
-    check_submit_job(store_handler, redis_config, local_config, index)
-    check_do_the_math(store_handler, redis_config, local_config, index)
+    # AE/EE
+    check_submit_job(store_handler, local_config, index)
+    check_do_the_math(store_handler, local_config, index)
 
 
 def check_open_with_api(index):

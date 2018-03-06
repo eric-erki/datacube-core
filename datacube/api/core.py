@@ -103,6 +103,8 @@ class Datacube(object):
 
         :param bool validate_connection: Should we check that the database connection is available and valid
 
+        :param bool preload_drivers: Should we preload the drivers in advance.
+
         :return: Datacube object
 
         """

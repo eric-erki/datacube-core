@@ -11,7 +11,7 @@ import zstd
 from itertools import repeat, product
 
 import numpy as np
-from pathos.multiprocessing import ProcessingPool
+from pathos.multiprocessing import ProcessPool
 from pathos.threading import ThreadPool
 from pathos.multiprocessing import freeze_support, cpu_count
 from six.moves import zip
@@ -36,7 +36,7 @@ class S3AIO(object):
         """
         self.s3io = S3IO(enable_s3, file_path, num_workers)
 
-        self.pool = ProcessingPool(num_workers)
+        self.pool = ProcessPool(num_workers)
         self.enable_compression = enable_compression
 
     def to_1d(self, index, shape):

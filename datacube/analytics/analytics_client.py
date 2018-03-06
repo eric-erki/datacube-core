@@ -25,7 +25,8 @@ def celery_app(store_config=None):
     _app.conf.update(
         task_serializer='pickle',
         result_serializer='pickle',
-        accept_content=['pickle'])
+        accept_content=['pickle'],
+        worker_prefetch_multiplier=1)
     return _app
 
 
@@ -47,6 +48,10 @@ class AnalyticsClient(object):
         app.conf.update(result_backend=config.redis_celery_config['url'],
                         broker_url=config.redis_celery_config['url'])
         self.logger.debug('Ready')
+
+    def update_config(self, config):
+        config_p = app.send_task('datacube.analytics.analytics_worker.update_config', args=(config, ))
+        config_p.get(disable_sync_subtasks=False)
 
     def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.

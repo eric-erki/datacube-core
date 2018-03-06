@@ -1,9 +1,21 @@
 from __future__ import absolute_import
 
+import threading
 from .driver_cache import load_drivers
 
 
 class WriterDriverCache(object):
+    __singleton_lock = threading.Lock()
+    __singleton_instance = None
+
+    @classmethod
+    def instance(cls):
+        if not cls.__singleton_instance:
+            with cls.__singleton_lock:
+                if not cls.__singleton_instance:
+                    cls.__singleton_instance = cls('datacube.plugins.io.write')
+        return cls.__singleton_instance
+
     def __init__(self, group):
         self._drivers = load_drivers(group)
 
@@ -31,10 +43,7 @@ class WriterDriverCache(object):
 def writer_cache():
     """ Singleton for WriterDriverCache
     """
-    # pylint: disable=protected-access
-    if not hasattr(writer_cache, '_instance'):
-        writer_cache._instance = WriterDriverCache('datacube.plugins.io.write')
-    return writer_cache._instance
+    return WriterDriverCache.instance()
 
 
 def writer_drivers():

@@ -8,7 +8,6 @@ JRO service calls will be created.
 from __future__ import absolute_import, print_function
 
 from sys import modules
-from threading import Thread
 from celery import Celery
 
 from .analytics_engine2 import AnalyticsEngineV2
@@ -72,22 +71,30 @@ def launch_ae_worker(local_config):
     config = local_config
     store_config = local_config.redis_celery_config
     # initialise_engines(local_config)
-    thread = Thread(target=launch_worker_thread, args=(store_config['url'],))
-    thread.start()
-    return thread
+    from multiprocessing import Process
+    process = Process(target=launch_worker_thread, args=(store_config['url'],))
+    process.start()
+    return process
 
 
 def launch_worker_thread(url):
     """Only used for pytests"""
     app.conf.update(result_backend=url,
                     broker_url=url)
-    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'DEBUG', '--autoscale=2,0']
+    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'INFO', '--autoscale=2,0']
     app.worker_main(argv)
 
 
 def stop_worker():
     """Only used for pytests"""
     app.control.shutdown()
+
+
+@app.task
+def update_config(local_config):
+    '''Only used for pytests.'''
+    global config
+    config = local_config
 
 
 @app.task

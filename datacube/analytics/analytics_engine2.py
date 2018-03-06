@@ -151,14 +151,11 @@ class AnalyticsEngineV2(Worker):
         # TODO: Add a loop: for dataset in datasets...
         metadata = self._datacube.metadata_for_load(**data)
         total_shape = metadata['grouped'].shape + metadata['geobox'].shape
-        _, indices, chunk_ids = S3LIO().create_indices(total_shape, storage_params['chunk'], '^_^')
+        _, indices, chunk_ids = S3LIO.create_indices(total_shape, storage_params['chunk'], '^_^')
         from copy import deepcopy
         decomposed_data = {}
         decomposed_data['query'] = deepcopy(data)
-        # metadata should be part of decomposed_data so loading on the workers does not require a
-        # database connection
-        # decomposed_data['metadata'] = metadata
-        # fails pickling in python 2.7
+        decomposed_data['metadata'] = metadata
         decomposed_data['indices'] = indices
         decomposed_data['chunk_ids'] = chunk_ids
         decomposed_data['total_shape'] = total_shape

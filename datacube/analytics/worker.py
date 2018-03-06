@@ -13,11 +13,12 @@ from datacube.config import LocalConfig
 
 
 class Worker(object):
-    def __init__(self, name, worker_type, config=None):
+    def __init__(self, name, worker_type, config=None, dc=True):
         self.logger = logging.getLogger(self.__class__.__name__)
         if not config:
             config = LocalConfig.find()
-        self._datacube = Datacube(config=config)
+        if dc:
+            self._datacube = Datacube(config=config)
         self._store = StoreWorkers(**config.redis_config)
         self._ee_config = config.execution_engine_config
         self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),
