@@ -1,9 +1,21 @@
 from __future__ import absolute_import
 
+import threading
 from .driver_cache import load_drivers
 
 
 class ReaderDriverCache(object):
+    __singleton_lock = threading.Lock()
+    __singleton_instance = None
+
+    @classmethod
+    def instance(cls):
+        if not cls.__singleton_instance:
+            with cls.__singleton_lock:
+                if not cls.__singleton_instance:
+                    cls.__singleton_instance = cls('datacube.plugins.io.read')
+        return cls.__singleton_instance
+
     def __init__(self, group):
         self._drivers = load_drivers(group)
 
@@ -30,21 +42,20 @@ class ReaderDriverCache(object):
         :return: Returns function `(DataSet, band_name:str) => DataSource`
         """
         driver = self._find_driver(uri_scheme, fmt)
-        return fallback if driver is None else driver.new_datasource
+        ds = fallback if driver is None else driver.new_datasource
+        return ds
 
     def drivers(self):
         """ Returns list of driver names
         """
-        return list(self._drivers.keys())
+        result = list(self._drivers.keys())
+        return result
 
 
 def rdr_cache():
     """ Singleton for ReaderDriverCache
     """
-    # pylint: disable=protected-access
-    if not hasattr(rdr_cache, '_instance'):
-        rdr_cache._instance = ReaderDriverCache('datacube.plugins.io.read')
-    return rdr_cache._instance
+    return ReaderDriverCache.instance()
 
 
 def reader_drivers():
