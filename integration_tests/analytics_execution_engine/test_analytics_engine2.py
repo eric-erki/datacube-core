@@ -84,6 +84,47 @@ def _test_submit_invalid_job(store_handler, redis_config, local_config, index, e
     store_handler._store.flushdb()
 
 
+def check_submit_job_params(store_handler, local_config, index):
+    logger = logging.getLogger(__name__)
+    logger.debug('Started.')
+
+    store_handler._store.flushdb()
+
+    def base_function(data, function_params=None):
+        with open(function_params['output_dir']+"my_result.txt", 'w') as f:
+            f.write("this is an output file with some text")
+        return data
+
+    params = {
+        'param_1': 1,
+        'param_2': 2
+    }
+
+    client = AnalyticsClient(local_config)
+    client.update_config(local_config)
+    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
+    jro, results = client.submit_python_function(base_function, data=None, function_params=params, storage_params=None)
+
+    # Wait a while for the main job to complete
+    for tstep in range(30):
+        if jro.job.status == JobStatuses.COMPLETED:
+            break
+        sleep(0.5)
+    assert jro.job.status == JobStatuses.COMPLETED
+    jro.update()
+
+    logger.debug('JRO\n{}'.format(jro))
+    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
+
+    # Base job should be complete unless something went wrong with worker threads.
+    # submit_python_function currently waits until jobs complete then sets base job status
+    assert jro.job.status == JobStatuses.COMPLETED
+
+    # Leave time for workers to complete their tasks then flush the store
+    sleep(0.4)
+    store_handler._store.flushdb()
+
+
 def check_submit_job(store_handler, local_config, index):
     '''Test the following:
         - the submission of a job with real data
@@ -102,7 +143,7 @@ def check_submit_job(store_handler, local_config, index):
 
     store_handler._store.flushdb()
 
-    def base_function(data):
+    def base_function(data, function_params=None):
         return data
     data = {
         'product': 'ls5_nbar_albers',
@@ -179,7 +220,7 @@ def check_do_the_math(store_handler, local_config, index):
     #     return xr.Dataset({'new_quantity': new_quantity})
 
     # Simple transform
-    def band_transform(data):
+    def band_transform(data, function_params=None):
         return data + 1000
 
     data_desc = {

@@ -52,20 +52,22 @@ class Worker(object):
                                                      self._store.get_job_status(job_id).name)
         self._store.add_worker_logs(self._id, message)
         self.logger.debug(message)
-        # Start combined result
-        self.result_starts(job, job['result_id'])
-        # Start individual results
-        for descriptor in job['result_descriptors'].values():
-            self.result_starts(job, descriptor['id'])
+        if job['result_id']:
+            # Start combined result
+            self.result_starts(job, job['result_id'])
+            # Start individual results
+            for descriptor in job['result_descriptors'].values():
+                self.result_starts(job, descriptor['id'])
 
     def job_finishes(self, job):
         '''Set job to completed status.'''
         job_id = job['id']
-        # Stop individual results
-        for descriptor in job['result_descriptors'].values():
-            self.result_finishes(job, descriptor['id'])
-        # Stop combined result
-        self.result_finishes(job, job['result_id'])
+        if job['result_id']:
+            # Stop individual results
+            for descriptor in job['result_descriptors'].values():
+                self.result_finishes(job, descriptor['id'])
+            # Stop combined result
+            self.result_finishes(job, job['result_id'])
         # Stop job
         self._store.set_job_status(job_id, JobStatuses.COMPLETED)
         message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,

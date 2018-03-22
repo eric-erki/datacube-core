@@ -10,7 +10,8 @@ import rasterio
 
 from datacube.compat import string_types
 from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
-        check_submit_job, check_do_the_math, store_handler, ee_celery
+        check_submit_job, check_do_the_math, check_submit_job_params, \
+        store_handler, ee_celery
 from integration_tests.utils import assert_click_command
 from integration_tests.conftest import prepare_test_ingestion_configuration
 
@@ -107,6 +108,7 @@ def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_han
     # AE/EE
     check_submit_job(store_handler, local_config, index)
     check_do_the_math(store_handler, local_config, index)
+    check_submit_job_params(store_handler, local_config, index)
 
 
 def check_open_with_api(index):

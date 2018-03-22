@@ -401,6 +401,8 @@ class Results(object):
             self._add_array(k, v)
 
     def to_dict(self):
+        if not self._id:
+            return None
         return {
             'id': self._id,
             'status': self.status,
@@ -428,7 +430,7 @@ class Results(object):
     @property
     def status(self):
         status = None
-        if self._jro.client:
+        if self._jro.client and self.id:
             status = self._jro.client.get_status(self)
         return status
 

@@ -3,6 +3,8 @@ submitting jobs in a cluster and receiving job result objects in return.'''
 
 from __future__ import absolute_import
 
+import os
+import zlib
 import logging
 from celery import Celery
 from cloudpickle import dumps
@@ -11,6 +13,7 @@ from datacube.engine_common.store_handler import StoreHandler
 from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
+from datacube.compat import urlparse
 
 
 def celery_app(store_config=None):
@@ -53,11 +56,15 @@ class AnalyticsClient(object):
         config_p = app.send_task('datacube.analytics.analytics_worker.update_config', args=(config, ))
         config_p.get(disable_sync_subtasks=False)
 
-    def submit_python_function(self, function, data, storage_params=None, *args, **kwargs):
+    # pylint: disable=too-many-locals
+    def submit_python_function(self, function, data, function_params=None, storage_params=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
         :param dict data: Dataset descriptor.
+        :param dict function_params: Parameters that will be passed to the function.
+          This should be kept small, large entries such as large files should be in s3 and the
+          url be stored here.
         :param dict storage_params: Storage parameters, e.g. `{'chunk': (...), 'ttl': -1}` where
           `ttl` is the life span of the results and `chunk` the preferred result chunking.
         :param list args: Optional positional arguments for the function.
@@ -66,8 +73,22 @@ class AnalyticsClient(object):
           subjob results.
         '''
         func = dumps(function)
+
+        # compress files in function_params
+        if function_params:
+            for key, value in function_params.items():
+                if not isinstance(value, str):
+                    continue
+                url = urlparse(value)
+                if url.scheme == 'file':
+                    fname = os.path.basename(url.path)
+                    with open(url.path, "rb") as _data:
+                        f = _data.read()
+                        _data = zlib.compress(f, 1)
+                    function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
+
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(func, data, storage_params), kwargs=kwargs)
+                                   args=(func, data, function_params, storage_params), kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis[0], client=self)
         results = analysis[1]
