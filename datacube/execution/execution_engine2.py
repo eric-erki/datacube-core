@@ -117,7 +117,7 @@ class ExecutionEngineV2(Worker):
                 job['function_params'][key] = input_dir + "/" + value['fname']
 
     # pylint: disable=too-many-locals
-    def post_process(self, job):
+    def post_process(self, job, use_s3=False):
         job_id = job['id']
 
         base_dir = expanduser("~") + "/EEv2/" + str(job_id)
@@ -136,10 +136,14 @@ class ExecutionEngineV2(Worker):
                 else:
                     s3_key = s3_base + "/" + rel_path + "/" + filename
                 print(s3_bucket, s3_key, dirname + "/" + filename)
-                s3 = boto3.client('s3')
-                transfer_config = TransferConfig(multipart_chunksize=8*1024*1024, multipart_threshold=8*1024*1024,
-                                                 max_concurrency=10)
-                s3.upload_file(dirname + "/" + filename, s3_bucket, s3_key, Config=transfer_config)
+                if use_s3:
+                    s3 = boto3.client('s3')
+                    transfer_config = TransferConfig(multipart_chunksize=8*1024*1024, multipart_threshold=8*1024*1024,
+                                                     max_concurrency=10)
+                    s3.upload_file(dirname + "/" + filename, s3_bucket, s3_key, Config=transfer_config)
+                else:
+                    # store somewhere else.
+                    pass
                 output_files.append({'bucket': s3_bucket, 'key': s3_key})
 
         # Clean up base directory
@@ -182,7 +186,7 @@ class ExecutionEngineV2(Worker):
             self.update_result_descriptor(descriptor, array.shape, array.dtype)
             self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
 
-        self.post_process(job)
+        self.post_process(job, self._ee_config['use_s3'])
 
         self.job_finishes(job)
 
