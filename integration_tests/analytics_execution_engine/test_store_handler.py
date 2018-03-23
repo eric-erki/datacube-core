@@ -804,3 +804,26 @@ def test_get_result_progress(store_handler, user_data):
     # Invalid job id: string
     with pytest.raises(ValueError):
         store_handler.get_result_progress('Hello')
+
+
+def test_set_user_data_invalid(store_handler):
+    '''Test the setting of user data with invalid parameters.'''
+    store_handler._store.flushdb()
+    # Invalid user data: not a dict
+    with pytest.raises(ValueError):
+        store_handler.set_user_data(1, 'Hello')
+    with pytest.raises(ValueError):
+        store_handler.set_user_data(1, 1)
+
+
+def test_set_user_data(store_handler):
+    '''Test the setting of user data.'''
+    store_handler._store.flushdb()
+
+    data = {
+        'test': 'Test data'
+    }
+    store_handler.set_user_data(1, data)
+    retrieved = store_handler.get_user_data(1)
+
+    assert data == retrieved

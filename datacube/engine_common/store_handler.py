@@ -1,5 +1,9 @@
 '''This module provides manages interaction with a redis store. This module provides manages
  interaction with a redis store.
+
+Being a rather low level API, very few checks are performed on values
+for better performance. For example, user data can be added to a job
+ID although there is no job with that ID.
 '''
 from __future__ import absolute_import
 
@@ -92,6 +96,7 @@ class StoreHandler(object):
     K_STATS = 'stats'
     K_LOGS = 'logs'
     K_STATS_STATUS = 'status'
+    K_USER_DATA = 'userdata'
 
     def __init__(self, **redis_config):
         '''Initialise the data store interface.'''
@@ -140,6 +145,10 @@ class StoreHandler(object):
                 self._store.rpush(self._make_list_key(key, JobStatuses.QUEUED), item_id)
         return item_id
 
+    def _set_item(self, key, item_id, item):
+        '''Set (or update) an item.'''
+        self._store.set(self._make_key(key, str(item_id)), dumps(item, byref=True))
+
     def _update_item(self, key, item_id, item):
         '''Update an item, basically overwriting its existing value with a new one.
 
@@ -152,11 +161,13 @@ class StoreHandler(object):
         return [int(item_id) for item_id
                 in self._store.lrange(self._make_list_key(key, status), 0, -1)]
 
-    def _get_item(self, key, item_id):
+    def _get_item(self, key, item_id, allow_empty=False):
         '''Retrieve a specific item by its key type and id.'''
         key = self._make_key(key, str(item_id))
         value = self._store.get(key)
         if not value:
+            if allow_empty:
+                return value
             raise ValueError('Invalid key "{}" or missing data in store'.format(key))
         return loads(value)
 
@@ -378,6 +389,24 @@ class StoreHandler(object):
             sum([self.get_result_status(rid) == JobStatuses.COMPLETED for rid in result]),
             len(result)
         )
+
+    def set_user_data(self, job_id, user_data=None):
+        '''Set or clear a job's user data, a dictionary of user-defined content.
+
+        Any existing values get overwritten. If user_data is empty,
+        then the key is cleared.
+        '''
+        if user_data is None:
+            self._store.delete(self._make_key(self.K_USER_DATA, str(job_id)))
+        elif not isinstance(user_data, dict):
+            raise ValueError('Invalid user data type ({}). It must be a dictionary.'
+                             .format(type(user_data)))
+        else:
+            self._set_item(self.K_USER_DATA, job_id, user_data)
+
+    def get_user_data(self, job_id):
+        '''Get a job's user data, a dictionary of user-defined content, or None.'''
+        return self._get_item(self.K_USER_DATA, job_id, allow_empty=True)
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''
