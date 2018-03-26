@@ -126,7 +126,7 @@ class ExecutionEngineV2(Worker):
         s3_bucket = 'eev2'
         s3_base = str(job_id) + "/output"
 
-        output_files = []
+        output_files = {}
         # Upload output directory to s3, file by file
         for dirname, _, files in walk(output_dir):
             rel_path = relpath(dirname, output_dir)
@@ -144,7 +144,7 @@ class ExecutionEngineV2(Worker):
                 else:
                     # store somewhere else.
                     pass
-                output_files.append({'bucket': s3_bucket, 'key': s3_key})
+                output_files[filename] = {'bucket': s3_bucket, 'key': s3_key}
 
         # Clean up base directory
         try:
@@ -153,6 +153,7 @@ class ExecutionEngineV2(Worker):
             pass
 
         # store & return output metadata dict
+        self._store.set_user_data(job_id, output_files)
         return {'output_files': output_files}
 
     def execute(self, job, base_results, *args, **kwargs):

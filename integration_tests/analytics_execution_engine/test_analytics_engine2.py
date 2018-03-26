@@ -90,20 +90,35 @@ def check_submit_job_params(store_handler, local_config, index):
 
     store_handler._store.flushdb()
 
+    filename = 'my_result.txt'
+
     def base_function(data, function_params=None):
-        with open(function_params['output_dir']+"my_result.txt", 'w') as f:
-            f.write("this is an output file with some text")
+        # Example of import in the function
+        from pathlib import Path
+        filepath = Path(function_params['output_dir']) / function_params['filename']
+        # Example of user-data (auxillary file)
+        with filepath.open('w') as f:
+            f.write('This is an auxillary output file with some text')
         return data
 
     params = {
-        'param_1': 1,
-        'param_2': 2
+        'filename': filename,
+        'some_value': 2
+    }
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.07, 149.18),
+        'y': (-35.32, -35.28)
     }
 
     client = AnalyticsClient(local_config)
     client.update_config(local_config)
+    # Use a chunk with x=120 so that 2 sub-jobs get created
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, data=None, function_params=params, storage_params=None)
+    jro, results = client.submit_python_function(base_function, data=data,
+                                                 function_params=params,
+                                                 storage_params={'chunk': (1, 120, 420)})
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -112,6 +127,14 @@ def check_submit_job_params(store_handler, local_config, index):
         sleep(0.5)
     assert jro.job.status == JobStatuses.COMPLETED
     jro.update()
+
+    # Check user data: since clients cannot see subjobs (and their
+    # IDs) we only check the format of each entry
+    for datum in jro.user_data:
+        assert filename in datum
+        assert 'bucket' in datum[filename]
+        assert 'key' in datum[filename]
+        assert datum[filename]['key'][-len(filename):] == filename
 
     logger.debug('JRO\n{}'.format(jro))
     logger.debug('Store dump\n{}'.format(client._store.str_dump()))

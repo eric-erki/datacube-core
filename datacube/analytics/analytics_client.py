@@ -118,3 +118,15 @@ class AnalyticsClient(object):
                               'shape=%s, dtype=%s',
                               jro_result.id, dataset,
                               result.descriptor['shape'], result.descriptor['dtype'])
+
+
+    def get_user_data(self, job_id):
+        '''Return the user_data of a job.'''
+        # Minimal check: job ID must be an int
+        if not isinstance(job_id, int):
+            raise ValueError('Can only return user_data for a valid job id')
+        action = UpdateActions.GET_JOB_USER_DATA
+        user_data_p = app.send_task('datacube.analytics.analytics_worker.get_update',
+                                    args=(action, job_id))
+        user_data = user_data_p.get(disable_sync_subtasks=False)
+        return user_data

@@ -15,6 +15,7 @@ class UpdateActions(Enum):
     GET_JOB_STATUS = 1
     GET_RESULT_STATUS = 2
     GET_RESULT = 3
+    GET_JOB_USER_DATA = 4
 
 
 class UpdateEngineV2(object):
@@ -40,4 +41,6 @@ class UpdateEngineV2(object):
             result = self._store.get_result_status(item_id)
         elif action == UpdateActions.GET_RESULT:
             result = self._store.get_result(item_id)
+        elif action == UpdateActions.GET_JOB_USER_DATA:
+            result = self._store.get_user_data(item_id)
         return result

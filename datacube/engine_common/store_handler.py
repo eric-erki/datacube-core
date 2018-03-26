@@ -147,6 +147,7 @@ class StoreHandler(object):
 
     def _set_item(self, key, item_id, item):
         '''Set (or update) an item.'''
+        # TODO: Compress any data if pickled size > some threshold
         self._store.set(self._make_key(key, str(item_id)), dumps(item, byref=True))
 
     def _update_item(self, key, item_id, item):
@@ -257,7 +258,7 @@ class StoreHandler(object):
     def add_job_dependencies(self, job_id, dependent_job_ids=None, dependent_result_ids=None):
         '''Add a job dependencies, a pickled tuple of a list of jobs ids and a list of result ids.
 
-        Any existing valued get overwritten.
+        Any existing values get overwritten.
         '''
         # Add pickled item to relevant list of items
         self._store.set(self._make_key(self.K_JOBS, self.K_DEPENDENCIES, str(job_id)),
@@ -394,7 +395,9 @@ class StoreHandler(object):
         '''Set or clear a job's user data, a dictionary of user-defined content.
 
         Any existing values get overwritten. If user_data is empty,
-        then the key is cleared.
+        then the key is cleared. Typically, this method is called by a
+        subjob, and the data stored will be retrieved for all subjobs
+        related to a base job.
         '''
         if user_data is None:
             self._store.delete(self._make_key(self.K_USER_DATA, str(job_id)))
@@ -405,8 +408,17 @@ class StoreHandler(object):
             self._set_item(self.K_USER_DATA, job_id, user_data)
 
     def get_user_data(self, job_id):
-        '''Get a job's user data, a dictionary of user-defined content, or None.'''
-        return self._get_item(self.K_USER_DATA, job_id, allow_empty=True)
+        '''Get a job's user data, a list of dictionaries.
+
+        Each subjob may store its own dictionary, and the list
+        collates them all.
+        '''
+        user_data = []
+        for sub_job_id in self.get_job_dependencies(job_id)[0]:
+            data = self._get_item(self.K_USER_DATA, sub_job_id, allow_empty=True)
+            if data:
+                user_data.append(data)
+        return user_data
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''

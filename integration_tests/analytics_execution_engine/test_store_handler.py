@@ -51,7 +51,9 @@ def user_data():
                 'results': [{
                     'result_type': RESULT_TYPES[result_no % 3],
                     'descriptor': 'Descriptor for {:03d}-{:03d}-{:03d}'.format(user_no, job_no, result_no)
-                } for result_no in range(3)]
+                } for result_no in range(3)],
+                'user_data': {'url': 'some://url/{}/{}'.format(job_no, url_no)
+                              for url_no in range(3)}
                 })
         users['user{:03d}'.format(user_no)] = jobs
     return users
@@ -813,17 +815,72 @@ def test_set_user_data_invalid(store_handler):
     with pytest.raises(ValueError):
         store_handler.set_user_data(1, 'Hello')
     with pytest.raises(ValueError):
-        store_handler.set_user_data(1, 1)
+        store_handler.set_user_data(1, 2)
 
 
-def test_set_user_data(store_handler):
-    '''Test the setting of user data.'''
+def test_set_user_data(store_handler, user_data):
+    '''Test job dependencies addition and retrieval.'''
     store_handler._store.flushdb()
+    expected_jobs = {}
+    expected_results = {}
+    expected_user_data = []
+    for user_no, jobs in user_data.items():
+        for job in jobs:
+            result_ids = []
+            for result in job['results']:
+                # Individual result
+                result_metadata = ResultMetadata(result['result_type'],
+                                                 result['descriptor'])
+                result_id = store_handler.add_result(result_metadata)
+                result_ids.append(result_id)
+                expected_results[result_id] = result_metadata
+            # List of result ids
+            result_id = store_handler.add_result(result_ids)
+            expected_results[result_id] = result_ids
+            # Job only stores the list of results
+            job_id = store_handler.add_job(job['function_type'],
+                                           job['function'],
+                                           job['data'],
+                                           result_id)
+            store_handler.set_user_data(job_id, job['user_data'])
+            expected_user_data.append(job['user_data'])
+            expected_jobs[job_id] = {
+                'function_type': job['function_type'],
+                'function': job['function'],
+                'data': job['data'],
+                'result_id': result_id,
+                'user_data': job['user_data']
+            }
 
-    data = {
-        'test': 'Test data'
-    }
-    store_handler.set_user_data(1, data)
-    retrieved = store_handler.get_user_data(1)
+    # Create base job
+    base_result_ids = []
+    for result_no in range(3):
+        base_result_metadata = ResultMetadata(ResultTypes.FILE,
+                                              'Descriptor for base job-{:03d}'.format(result_no))
+        base_result_id = store_handler.add_result(base_result_metadata)
+        base_result_ids.append(base_result_id)
+    # List of base result ids
+    base_result_id = store_handler.add_result(base_result_ids)
+    # Job only stores the list of results
 
-    assert data == retrieved
+    def base_function():
+        return 'Base function'
+    base_job_id = store_handler.add_job(FunctionTypes.PICKLED,
+                                        base_function,
+                                        'Data for base job',
+                                        base_result_id)
+    # Add dependencies
+    store_handler.add_job_dependencies(base_job_id,
+                                       list(expected_jobs.keys()),
+                                       list(expected_results.keys()))
+
+    assert store_handler.get_job_dependencies(base_job_id) == (
+        list(expected_jobs.keys()),
+        list(expected_results.keys())
+    )
+
+    retrieved = sorted(store_handler.get_user_data(base_job_id),
+                       key=lambda item: item['url'])
+    expected = sorted(expected_user_data,
+                      key=lambda item: item['url'])
+    assert retrieved == expected
