@@ -78,7 +78,8 @@ class JobResult(object):
     def to_dict(self):
         return {
             'job': self._job.to_dict(),
-            'results': self._results.to_dict()
+            'results': self._results.to_dict(),
+            'user_data': self._user_data.to_dict()
         }
 
     def __repr__(self):

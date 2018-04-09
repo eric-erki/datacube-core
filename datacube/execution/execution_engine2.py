@@ -6,7 +6,7 @@ from os.path import expanduser, relpath
 from sys import version_info
 import numpy as np
 import zstd
-from cloudpickle import loads
+from dill import loads
 import zlib
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -61,6 +61,8 @@ class ExecutionEngineV2(Worker):
     def _compute_result(self, function, data, function_params=None):
         '''Run the function on the data.'''
         # TODO: restore function according to its type
+        cctx = zstd.ZstdDecompressor()
+        function = cctx.decompress(function)
         func = loads(function)
         return func(data, function_params)
 
@@ -106,7 +108,9 @@ class ExecutionEngineV2(Worker):
                 if 'copy_to_input_dir' not in value and not value['copy_to_input_dir']:
                     continue
                 try:
-                    data = zlib.decompress(value['data'])
+                    # data = zlib.decompress(value['data'])
+                    cctx = zstd.ZstdDecompressor()
+                    data = cctx.decompress(value['data'])
                 except zlib.error:
                     continue
 
@@ -144,7 +148,10 @@ class ExecutionEngineV2(Worker):
                 else:
                     # store somewhere else.
                     pass
-                output_files[filename] = {'bucket': s3_bucket, 'key': s3_key}
+                if rel_path != '.':
+                    output_files[rel_path + "/" + filename] = {'bucket': s3_bucket, 'key': s3_key}
+                else:
+                    output_files[filename] = {'bucket': s3_bucket, 'key': s3_key}
 
         # Clean up base directory
         try:

@@ -5,9 +5,10 @@ from __future__ import absolute_import
 
 import os
 import zlib
+import zstd
 import logging
 from celery import Celery
-from cloudpickle import dumps
+from dill import dumps
 
 from datacube.engine_common.store_handler import StoreHandler
 from .job_result import JobResult, Job, Results
@@ -73,6 +74,8 @@ class AnalyticsClient(object):
           subjob results.
         '''
         func = dumps(function)
+        cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
+        func = cctx.compress(func)
 
         # compress files in function_params
         if function_params:
@@ -84,7 +87,8 @@ class AnalyticsClient(object):
                     fname = os.path.basename(url.path)
                     with open(url.path, "rb") as _data:
                         f = _data.read()
-                        _data = zlib.compress(f, 1)
+                        # _data = zlib.compress(f, 1)
+                        _data = cctx.compress(f)
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
 
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
