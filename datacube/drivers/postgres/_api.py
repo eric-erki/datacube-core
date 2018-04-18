@@ -93,7 +93,7 @@ def get_native_fields():
     fields = {
         'id': NativeField(
             'id',
-            None,
+            'Dataset UUID',
             DATASET.c.id
         ),
         'product': NativeField(
@@ -108,7 +108,7 @@ def get_native_fields():
         ),
         'metadata_type': NativeField(
             'metadata_type',
-            'Metadata type of dataset',
+            'Metadata type name of dataset',
             METADATA_TYPE.c.name
         ),
         'metadata_type_id': NativeField(
@@ -468,8 +468,8 @@ class PostgresDbAPI(object):
                         with_source_ids=False, limit=None):
         """
         :type with_source_ids: bool
-        :type select_fields: tuple[datacube.index.postgres._fields.PgField]
-        :type expressions: tuple[datacube.index.postgres._fields.PgExpression]
+        :type select_fields: tuple[datacube.drivers.postgres._fields.PgField]
+        :type expressions: tuple[datacube.drivers.postgres._fields.PgExpression]
         """
         select_query = self.search_datasets_query(expressions, source_exprs,
                                                   select_fields, with_source_ids, limit)
@@ -494,7 +494,7 @@ class PostgresDbAPI(object):
 
     def count_datasets(self, expressions):
         """
-        :type expressions: tuple[datacube.index.postgres._fields.PgExpression]
+        :type expressions: tuple[datacube.drivers.postgres._fields.PgExpression]
         :rtype: int
         """
 
@@ -517,7 +517,7 @@ class PostgresDbAPI(object):
         :type period: str
         :type start: datetime.datetime
         :type end: datetime.datetime
-        :type expressions: tuple[datacube.index.postgres._fields.PgExpression]
+        :type expressions: tuple[datacube.drivers.postgres._fields.PgExpression]
         :rtype: list[((datetime.datetime, datetime.datetime), int)]
         """
 

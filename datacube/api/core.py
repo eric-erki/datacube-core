@@ -41,30 +41,6 @@ THREADING_REQS_AVAILABLE = ('SharedArray' in sys.modules and 'pathos.threading' 
 Group = namedtuple('Group', ['key', 'datasets'])
 
 
-def _xarray_affine(obj):
-    dims = obj.crs.dimensions
-    xres, xoff = data_resolution_and_offset(obj[dims[1]].values)
-    yres, yoff = data_resolution_and_offset(obj[dims[0]].values)
-    return Affine.translation(xoff, yoff) * Affine.scale(xres, yres)
-
-
-def _xarray_extent(obj):
-    return obj.geobox.extent
-
-
-def _xarray_geobox(obj):
-    dims = obj.crs.dimensions
-    return geometry.GeoBox(obj[dims[1]].size, obj[dims[0]].size, obj.affine, obj.crs)
-
-
-xarray.Dataset.geobox = property(_xarray_geobox)
-xarray.Dataset.affine = property(_xarray_affine)
-xarray.Dataset.extent = property(_xarray_extent)
-xarray.DataArray.geobox = property(_xarray_geobox)
-xarray.DataArray.affine = property(_xarray_affine)
-xarray.DataArray.extent = property(_xarray_extent)
-
-
 class Datacube(object):
     """
     Interface to search, read and write a datacube.
@@ -84,7 +60,7 @@ class Datacube(object):
         If no index or config is given, the default configuration is used for database connection.
 
         :param Index index: The database index to use.
-        :type index: :py:class:`datacube.index._api.Index` or None.
+        :type index: :py:class:`datacube.index.Index` or None.
 
         :param Union[LocalConfig|str] config: A config object or a path to a config file that defines the connection.
 
@@ -130,7 +106,7 @@ class Datacube(object):
         :param with_pandas: return the list as a Pandas DataFrame, otherwise as a list of dict.
         :rtype: pandas.DataFrame or list(dict)
         """
-        rows = [datatset_type_to_row(dataset_type) for dataset_type in self.index.products.get_all()]
+        rows = [dataset_type_to_row(dataset_type) for dataset_type in self.index.products.get_all()]
         if not with_pandas:
             return rows
 
@@ -302,28 +278,9 @@ class Datacube(object):
         if not observations:
             return None if stack else xarray.Dataset()
 
-        if like:
-            assert output_crs is None, "'like' and 'output_crs' are not supported together"
-            assert resolution is None, "'like' and 'resolution' are not supported together"
-            assert align is None, "'like' and 'align' are not supported together"
-            geobox = like.geobox
-        else:
-            if output_crs:
-                if not resolution:
-                    raise RuntimeError("Must specify 'resolution' when specifying 'output_crs'")
-                crs = geometry.CRS(output_crs)
-            else:
-                grid_spec = self.index.products.get_by_name(product).grid_spec
-                if not grid_spec or not grid_spec.crs:
-                    raise RuntimeError("Product has no default CRS. Must specify 'output_crs' and 'resolution'")
-                crs = grid_spec.crs
-                if not resolution:
-                    if not grid_spec.resolution:
-                        raise RuntimeError("Product has no default resolution. Must specify 'resolution'")
-                    resolution = grid_spec.resolution
-                    align = align or grid_spec.alignment
-            geobox = geometry.GeoBox.from_geopolygon(query_geopolygon(**query) or get_bounds(observations, crs),
-                                                     resolution, crs, align)
+        geobox = output_geobox(like=like, output_crs=output_crs, resolution=resolution, align=align,
+                               grid_spec=self.index.products.get_by_name(product).grid_spec,
+                               datasets=observations, **query)
 
         group_by = query_group_by(**query)
         grouped = self.group_datasets(observations, group_by)
@@ -547,14 +504,8 @@ class Datacube(object):
         datasets = self.index.datasets.search(limit=limit,
                                               **query.search_terms)
 
-        polygon = query.geopolygon
-        for dataset in datasets:
-            if polygon:
-                # Check against the bounding box of the original scene, can throw away some portions
-                if intersects(polygon.to_crs(dataset.crs), dataset.extent):
-                    yield dataset
-            else:
-                yield dataset
+        for dataset in select_datasets_inside_polygon(datasets, query.geopolygon):
+            yield dataset
 
     @staticmethod
     def product_sources(datasets, group_by):
@@ -787,6 +738,43 @@ class Datacube(object):
         self.close()
 
 
+def output_geobox(like=None, output_crs=None, resolution=None, align=None,
+                  grid_spec=None, datasets=None, **query):
+    """ Configure output geobox from user provided output specs. """
+
+    if like is not None:
+        assert output_crs is None, "'like' and 'output_crs' are not supported together"
+        assert resolution is None, "'like' and 'resolution' are not supported together"
+        assert align is None, "'like' and 'align' are not supported together"
+        return like.geobox
+
+    if output_crs is not None:
+        # user provided specifications
+        if resolution is None:
+            raise ValueError("Must specify 'resolution' when specifying 'output_crs'")
+        crs = geometry.CRS(output_crs)
+    else:
+        # specification from grid_spec
+        if grid_spec is None or grid_spec.crs is None:
+            raise ValueError("Product has no default CRS. Must specify 'output_crs' and 'resolution'")
+        crs = grid_spec.crs
+        if resolution is None:
+            if grid_spec.resolution is None:
+                raise ValueError("Product has no default resolution. Must specify 'resolution'")
+            resolution = grid_spec.resolution
+        align = align or grid_spec.alignment
+
+    return geometry.GeoBox.from_geopolygon(query_geopolygon(**query) or get_bounds(datasets, crs),
+                                           resolution, crs, align)
+
+
+def select_datasets_inside_polygon(datasets, polygon):
+    # Check against the bounding box of the original scene, can throw away some portions
+    for dataset in datasets:
+        if polygon is None or intersects(polygon.to_crs(dataset.crs), dataset.extent):
+            yield dataset
+
+
 def fuse_lazy(datasets, geobox, measurement, skip_broken_datasets=False, fuse_func=None, prepend_dims=0):
     prepend_shape = (1,) * prepend_dims
     data = numpy.full(geobox.shape, measurement['nodata'], dtype=measurement['dtype'])
@@ -831,7 +819,7 @@ def set_resampling_method(measurements, resampling=None):
     return measurements
 
 
-def datatset_type_to_row(dt):
+def dataset_type_to_row(dt):
     row = {
         'id': dt.id,
         'name': dt.name,
@@ -840,7 +828,7 @@ def datatset_type_to_row(dt):
     row.update(dt.fields)
     if dt.grid_spec is not None:
         row.update({
-            'crs': dt.grid_spec.crs,
+            'crs': str(dt.grid_spec.crs),
             'spatial_dimensions': dt.grid_spec.dimensions,
             'tile_size': dt.grid_spec.tile_size,
             'resolution': dt.grid_spec.resolution,

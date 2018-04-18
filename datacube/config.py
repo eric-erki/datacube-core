@@ -67,9 +67,7 @@ class LocalConfig(object):
     """
 
     def __init__(self, config, files_loaded=None, env=None):
-        '''
-
-
+        """
         Datacube environment resolution precedence is:
           1. Supplied as a function argument `env`
           2. DATACUBE_ENVIRONMENT environment variable
@@ -78,7 +76,7 @@ class LocalConfig(object):
 
         If environment is supplied by any of the first 3 methods is not present
         in the config, then throw an exception.
-        '''
+        """
         self._config = config  # type: configparser.ConfigParser
         self.files_loaded = []
         if files_loaded:

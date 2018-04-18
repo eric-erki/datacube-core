@@ -30,14 +30,14 @@ except ImportError:
 
 class DatasetResource(object):
     """
-    :type _db: datacube.index.postgres._connections.PostgresDb
-    :type types: datacube.index.products.ProductResource
+    :type _db: datacube.drivers.postgres._connections.PostgresDb
+    :type types: datacube.index._products.ProductResource
     """
 
     def __init__(self, db, dataset_type_resource):
         """
-        :type db: datacube.index.postgres._connections.PostgresDb
-        :type dataset_type_resource: datacube.index.products.ProductResource
+        :type db: datacube.drivers.postgres._connections.PostgresDb
+        :type dataset_type_resource: datacube.index._products.ProductResource
         """
         self._db = db
         self.types = dataset_type_resource
@@ -66,7 +66,7 @@ class DatasetResource(object):
             return None
 
         for dataset, result in datasets.values():
-            dataset.metadata_doc['lineage']['source_datasets'] = {
+            dataset.metadata.sources = {
                 classifier: datasets[source][0].metadata_doc
                 for source, classifier in zip(result['sources'], result['classes']) if source
             }
@@ -84,8 +84,10 @@ class DatasetResource(object):
         :rtype: list[Dataset]
         """
         with self._db.connect() as connection:
-            return [self._make(result, full_info=True)
-                    for result in connection.get_derived_datasets(id_)]
+            return [
+                self._make(result, full_info=True)
+                for result in connection.get_derived_datasets(id_)
+            ]
 
     def has(self, id_):
         """
@@ -120,8 +122,8 @@ class DatasetResource(object):
             sources_policy = 'skip'
         self._add_sources(dataset, sources_policy)
 
-        sources_tmp = dataset.type.dataset_reader(dataset.metadata_doc).sources
-        dataset.type.dataset_reader(dataset.metadata_doc).sources = {}
+        sources_tmp = dataset.metadata.sources
+        dataset.metadata.sources = {}
         try:
             _LOG.info('Indexing %s', dataset.id)
 
@@ -142,12 +144,12 @@ class DatasetResource(object):
                     except DuplicateRecordError as e:
                         _LOG.warning(str(e))
         finally:
-            dataset.type.dataset_reader(dataset.metadata_doc).sources = sources_tmp
+            dataset.metadata.sources = sources_tmp
 
         return dataset
 
     def search_product_duplicates(self, product, *group_fields):
-        # type: (DatasetType, Iterable[Union[str, field.Field]]) -> Iterable[tuple, Set[UUID]]
+        # type: (DatasetType, Iterable[Union[str, fields.Field]]) -> Iterable[tuple, Set[UUID]]
         """
         Find dataset ids who have duplicates of the given set of field names.
 
@@ -247,8 +249,8 @@ class DatasetResource(object):
         for offset, old_val, new_val in unsafe_changes:
             _LOG.info("Unsafe change from %r to %r", old_val, new_val)
 
-        sources_tmp = dataset.type.dataset_reader(dataset.metadata_doc).sources
-        dataset.type.dataset_reader(dataset.metadata_doc).sources = {}
+        sources_tmp = dataset.metadata.sources
+        dataset.metadata.sources = {}
         try:
             product = self.types.get_by_name(dataset.type.name)
             with self._db.begin() as transaction:
@@ -257,7 +259,7 @@ class DatasetResource(object):
 
             self._ensure_new_locations(dataset, existing)
         finally:
-            dataset.type.dataset_reader(dataset.metadata_doc).sources = sources_tmp
+            dataset.metadata.sources = sources_tmp
 
         return dataset
 
@@ -599,13 +601,11 @@ class DatasetResource(object):
     def _do_search_by_product(self, query, return_fields=False, select_field_names=None,
                               with_source_ids=False, source_filter=None,
                               limit=None):
-
         if source_filter:
             product_queries = list(self._get_product_queries(source_filter))
             if not product_queries:
                 # No products match our source filter, so there will be no search results regardless.
-                _LOG.info("No products match source filter")
-                return
+                raise ValueError('No products match source filter: ' % source_filter)
             if len(product_queries) > 1:
                 raise RuntimeError("Multi-product source filters are not supported. Try adding 'product' field")
 
@@ -616,6 +616,9 @@ class DatasetResource(object):
             source_exprs = None
 
         product_queries = list(self._get_product_queries(query))
+        if not product_queries:
+            raise ValueError('No products match search terms: %r' % query)
+
         for q, product in product_queries:
             dataset_fields = product.metadata_type.dataset_fields
             query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))

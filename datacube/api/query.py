@@ -44,13 +44,13 @@ OTHER_KEYS = ('measurements', 'group_by', 'output_crs', 'resolution', 'set_nan',
 
 class Query(object):
     def __init__(self, index=None, product=None, geopolygon=None, like=None, **search_terms):
-        """"Parses search terms in preparation for querying the Data Cube Index.
+        """Parses search terms in preparation for querying the Data Cube Index.
 
         Create a :class:`Query` object by passing it a set of search terms as keyword arguments.
 
         >>> query = Query(product='ls5_nbar_albers', time=('2001-01-01', '2002-01-01'))
 
-        Use by accessing :attr:`search_terms`::
+        Use by accessing :attr:`search_terms`:
 
         >>> query.search_terms['time']  # doctest: +NORMALIZE_WHITESPACE
         Range(begin=datetime.datetime(2001, 1, 1, 0, 0, tzinfo=<UTC>), \
@@ -60,7 +60,7 @@ class Query(object):
 
         Used by :meth:`datacube.Datacube.find_datasets` and :meth:`datacube.Datacube.load`.
 
-        :param datacube.index._api.Index index: An optional `index` object, if checking of field names is desired.
+        :param datacube.index.Index index: An optional `index` object, if checking of field names is desired.
         :param str product: name of product
         :param geopolygon: spatial bounds of the search
         :type geopolygon: geometry.Geometry or None
@@ -140,52 +140,6 @@ class Query(object):
                    geopolygon=self.geopolygon)
 
 
-class DescriptorQuery(Query):
-    """
-    Representation of an old `get_descriptor()/get_data()` style query for the :class:`datacube.API`.
-    """
-    def __init__(self, descriptor_request=None):
-        super(DescriptorQuery, self).__init__()
-
-        if descriptor_request is None:
-            descriptor_request = {}
-        if not isinstance(descriptor_request, collections.Mapping):
-            raise ValueError('Could not understand descriptor {}'.format(descriptor_request))
-
-        if 'storage_type' in descriptor_request:
-            self.product = descriptor_request['storage_type']
-        defined_keys = ('dimensions', 'variables', 'product', 'storage_type')
-        self.search = {key: value for key, value in descriptor_request.items() if key not in defined_keys}
-
-        if 'product' in descriptor_request:
-            self.search['product_type'] = descriptor_request['product']
-
-        if 'variables' in descriptor_request:
-            self.measurements = descriptor_request['variables']
-
-        group_by_name = 'time'
-        if 'dimensions' in descriptor_request:
-            dims = descriptor_request['dimensions']
-
-            spatial_dims = {dim: v for dim, v in dims.items() if dim in SPATIAL_KEYS}
-            range_params = {dim: v['range'] for dim, v in spatial_dims.items() if 'range' in v}
-            crs = {c for dim, v in dims.items() for k, c in v.items() if k in CRS_KEYS}
-            if len(crs) == 1:
-                range_params['crs'] = crs.pop()
-            elif len(crs) > 1:
-                raise ValueError('Spatial dimensions must be in the same coordinate reference system: {}'.format(crs))
-            self.geopolygon = _range_to_geopolygon(**range_params)
-
-            other_dims = {dim: v for dim, v in dims.items()
-                          if dim not in ['latitude', 'lat', 'y', 'longitude', 'lon', 'x']}
-            self.search.update(_range_to_search(**other_dims))
-            self.slices = {dim: slice(*v['array_range']) for dim, v in dims.items() if 'array_range' in v}
-            groups = [v['group_by'] for dim, v in dims.items() if 'group_by' in v]
-            if groups:
-                group_by_name = groups[0]
-        self.group_by = query_group_by(group_by_name)
-
-
 def query_geopolygon(geopolygon=None, **kwargs):
     spatial_dims = {dim: v for dim, v in kwargs.items() if dim in SPATIAL_KEYS}
     crs = {v for k, v in kwargs.items() if k in CRS_KEYS}
@@ -194,10 +148,13 @@ def query_geopolygon(geopolygon=None, **kwargs):
     elif len(crs) > 1:
         raise ValueError('Spatial dimensions must be in the same coordinate reference system: {}'.format(crs))
 
-    if geopolygon and spatial_dims:
+    if geopolygon is not None and len(spatial_dims) > 0:
         raise ValueError('Cannot specify "geopolygon" and one of %s at the same time' % (SPATIAL_KEYS + CRS_KEYS,))
 
-    return geopolygon or _range_to_geopolygon(**spatial_dims)
+    if geopolygon is None:
+        return _range_to_geopolygon(**spatial_dims)
+
+    return geopolygon
 
 
 def query_group_by(group_by='time', **kwargs):
@@ -268,20 +225,6 @@ def _value_to_range(value):
         return value, value
     else:
         return float(value[0]), float(value[-1])
-
-
-def _range_to_search(**kwargs):
-    search = {}
-    for key, value in kwargs.items():
-        if key.lower() in ('time', 't'):
-            time_range = value['range']
-            search['time'] = _time_to_search_dims(time_range)
-        elif key not in ['latitude', 'lat', 'y'] + ['longitude', 'lon', 'x']:
-            if isinstance(value, collections.Sequence) and len(value) == 2:
-                search[key] = Range(*value)
-            else:
-                search[key] = value
-    return search
 
 
 def _values_to_search(**kwargs):
