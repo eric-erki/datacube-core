@@ -58,13 +58,13 @@ class ExecutionEngineV2(Worker):
             return Datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
                                       metadata['measurements_values'].values(), use_threads=True)
 
-    def _compute_result(self, function, data, function_params=None):
+    def _compute_result(self, function, data, function_params=None, user_task=None):
         '''Run the function on the data.'''
         # TODO: restore function according to its type
         cctx = zstd.ZstdDecompressor()
         function = cctx.decompress(function)
         func = loads(function)
-        return func(data, function_params)
+        return func(data, function_params, user_task)
 
     def _save_array_in_s3(self, array, result_descriptor, chunk_id, use_s3=False):
         '''Saves a single xarray.DataArray object to s3/s3-file storage'''
@@ -83,6 +83,8 @@ class ExecutionEngineV2(Worker):
     def pre_process(self, job):
         if 'function_params' not in job or job['function_params'] is None:
             job['function_params'] = {}
+        if 'user_task' not in job or job['user_task'] is None:
+            job['user_task'] = {}
 
         job_id = job['id']
 
@@ -121,7 +123,7 @@ class ExecutionEngineV2(Worker):
                 job['function_params'][key] = input_dir + "/" + value['fname']
 
     # pylint: disable=too-many-locals
-    def post_process(self, job, use_s3=False):
+    def post_process(self, job, user_data, use_s3=False):
         job_id = job['id']
 
         base_dir = expanduser("~") + "/EEv2/" + str(job_id)
@@ -160,7 +162,8 @@ class ExecutionEngineV2(Worker):
             pass
 
         # store & return output metadata dict
-        self._store.set_user_data(job_id, output_files)
+        user_data.update(output_files)
+        self._store.set_user_data(job_id, user_data)
         return {'output_files': output_files}
 
     def execute(self, job, base_results, *args, **kwargs):
@@ -179,22 +182,27 @@ class ExecutionEngineV2(Worker):
             data = None
 
         # Execute function here
-        computed = self._compute_result(job['function'], data, job['function_params'])
+        computed = self._compute_result(job['function'], data,
+                                        job['function_params'], job['user_task'])
 
-        # Save results here
-        # map input to output
-        # todo: pass in parameters from submit_python_function
-        #       - storage parameters
-        #       - naming parameters
-        #       - unique key name
-        for array_name, descriptor in job['result_descriptors'].items():
-            base_result_descriptor = base_results[array_name]
-            array = computed[array_name]
-            # Update result descriptor based on processed data
-            self.update_result_descriptor(descriptor, array.shape, array.dtype)
-            self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
+        user_data = {}
+        if data:
+            # Save results here
+            # map input to output
+            # todo: pass in parameters from submit_python_function
+            #       - storage parameters
+            #       - naming parameters
+            #       - unique key name
+            for array_name, descriptor in job['result_descriptors'].items():
+                base_result_descriptor = base_results[array_name]
+                array = computed[array_name]
+                # Update result descriptor based on processed data
+                self.update_result_descriptor(descriptor, array.shape, array.dtype)
+                self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
+        else:
+            user_data = {'output': computed}
 
-        self.post_process(job, self._ee_config['use_s3'])
+        self.post_process(job, user_data, self._ee_config['use_s3'])
 
         self.job_finishes(job)
 

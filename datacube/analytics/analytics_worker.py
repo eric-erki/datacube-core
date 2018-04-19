@@ -98,12 +98,13 @@ def update_config(local_config):
 
 
 @app.task
-def run_python_function_base(function, data, function_params=None, storage_params=None, *args, **kwargs):
+def run_python_function_base(function, function_params=None, data=None,
+                             user_tasks=None, *args, **kwargs):
     '''Process the function and data submitted by the user.'''
     analytics_engine = AnalyticsEngineV2('Analytics Engine', config)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
-    jro, decomposed = analytics_engine.analyse(function, data, function_params, storage_params, *args, **kwargs)
+    jro, decomposed = analytics_engine.analyse(function, function_params, data, user_tasks, *args, **kwargs)
     monitor_jobs.delay(decomposed)
     results = []
     for job in decomposed['jobs']:

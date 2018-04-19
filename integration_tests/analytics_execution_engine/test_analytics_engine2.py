@@ -92,7 +92,7 @@ def check_submit_job_params(store_handler, local_config, index):
 
     filename = 'my_result.txt'
 
-    def base_function(data, function_params=None):
+    def base_function(data, function_params=None, user_data=None):
         # Example of import in the function
         from pathlib import Path
         filepath = Path(function_params['output_dir']) / function_params['filename']
@@ -101,24 +101,28 @@ def check_submit_job_params(store_handler, local_config, index):
             f.write('This is an auxillary output file with some text')
         return data
 
-    params = {
+    function_params = {
         'filename': filename,
         'some_value': 2
     }
     data = {
-        'product': 'ls5_nbar_albers',
-        'measurements': ['blue', 'red'],
-        'x': (149.07, 149.18),
-        'y': (-35.32, -35.28)
+        'query': {
+            'product': 'ls5_nbar_albers',
+            'measurements': ['blue', 'red'],
+            'x': (149.07, 149.18),
+            'y': (-35.32, -35.28)
+        },
+        'storage_params': {
+            'chunk': (1, 120, 420)
+        }
     }
 
     client = AnalyticsClient(local_config)
     client.update_config(local_config)
     # Use a chunk with x=120 so that 2 sub-jobs get created
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, data=data,
-                                                 function_params=params,
-                                                 storage_params={'chunk': (1, 120, 420)})
+    jro, results = client.submit_python_function(base_function, function_params=function_params,
+                                                 data=data)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -166,18 +170,23 @@ def check_submit_job(store_handler, local_config, index):
 
     store_handler._store.flushdb()
 
-    def base_function(data, function_params=None):
+    def base_function(data, function_params=None, user_data=None):
         return data
     data = {
-        'product': 'ls5_nbar_albers',
-        'measurements': ['blue', 'red'],
-        'x': (149.07, 149.18),
-        'y': (-35.32, -35.28)
+        'query': {
+            'product': 'ls5_nbar_albers',
+            'measurements': ['blue', 'red'],
+            'x': (149.07, 149.18),
+            'y': (-35.32, -35.28)
+        },
+        'storage_params': {
+            'chunk': (1, 231, 420)
+        }
     }
     client = AnalyticsClient(local_config)
     client.update_config(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, data, storage_params={'chunk': (1, 231, 420)})
+    jro, results = client.submit_python_function(base_function, data=data)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -218,7 +227,7 @@ def check_submit_job(store_handler, local_config, index):
 
     # check data stored correctly
     final_job = client._store.get_job(jro.job.id)
-    assert client._store.get_data(final_job.data_id) == data
+    assert client._store.get_data(final_job.data_id) == data['query']
 
     # there should be at least one job dependency
     job_dep = client._store.get_job_dependencies(jro.job.id)
@@ -243,19 +252,25 @@ def check_do_the_math(store_handler, local_config, index):
     #     return xr.Dataset({'new_quantity': new_quantity})
 
     # Simple transform
-    def band_transform(data, function_params=None):
+    def band_transform(data, function_params=None, user_data=None):
         return data + 1000
 
-    data_desc = {
-        'product': 'ls5_nbar_albers',
-        'measurements': ['blue', 'red'],
-        'x': (149.07, 149.18),
-        'y': (-35.32, -35.28)
+    data = {
+        'query': {
+            'product': 'ls5_nbar_albers',
+            'measurements': ['blue', 'red'],
+            'x': (149.07, 149.18),
+            'y': (-35.32, -35.28)
+        },
+        'storage_params': {
+            'chunk': (1, 231, 420)
+        }
     }
+
     client = AnalyticsClient(local_config)
     client.update_config(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(band_transform, data_desc, storage_params={'chunk': (1, 231, 420)})
+    jro, results = client.submit_python_function(band_transform, data=data)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
@@ -278,6 +293,85 @@ def check_do_the_math(store_handler, local_config, index):
     # Leave time for workers to complete their tasks then flush the store
     sleep(0.4)
     print('Store dump\n{}'.format(client._store.str_dump()))
+    store_handler._store.flushdb()
+
+
+def check_submit_job_user_tasks(store_handler, local_config, index):
+    '''Test the following:
+        - the submission of a job with user tasks (instead of automatic data decomposition)
+        - decomposition using user tasks
+        - execute function
+        - save data
+        - construct JRO
+        - check JRO.
+
+    This is a stub.
+
+    This test function needs further work to test the JRO and corresponding store values.
+    '''
+    logger = logging.getLogger(__name__)
+    logger.debug('Started.')
+
+    store_handler._store.flushdb()
+
+    def base_function(data, function_params=None, user_task=None):
+        from pathlib import Path
+        from osgeo.gdal import OpenEx
+        filepath = Path(user_task['filepath'])
+        dataSource = OpenEx(str(filepath))
+        extent = None
+        if dataSource:
+            layer = dataSource.GetLayer()
+            feature = layer.GetFeature(user_task['feature'])
+            geom = feature.GetGeometryRef()
+            extent = geom.GetEnvelope()
+        else:
+            print('Could not open {}'.format(filepath))
+        output_path = Path(function_params['output_dir']) / 'feature{}'.format(user_task['feature'])
+        with output_path.open('w') as fh:
+            fh.write('Test')
+        return extent
+    user_tasks = [{'filepath': 'integration_tests/analytics_execution_engine/data/polygons.shp',
+                   'feature': n} for n in range(4)]
+
+    expected_extents = [
+        (146.99176708700008, 147.00366523700006, -35.306823330999975, -35.287790282999936),
+        (146.43423890000008, 146.47296589200005, -35.249874674999944, -35.19856893299993),
+        (146.14353063500005, 146.22597876600003, -35.344454834999965, -35.23281874899993),
+        (146.33783807400005, 146.35879447800005, -35.41324290999995, -35.393512105999946)
+    ]
+
+    client = AnalyticsClient(local_config)
+    client.update_config(local_config)
+    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
+    jro, results = client.submit_python_function(base_function, user_tasks=user_tasks)
+
+    # Wait a while for the main job to complete
+    for tstep in range(30):
+        if jro.job.status == JobStatuses.COMPLETED:
+            break
+        sleep(0.5)
+    assert jro.job.status == JobStatuses.COMPLETED
+    jro.update()
+
+    logger.debug('JRO\n{}'.format(jro.results))
+    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
+
+    # Check we obtain the expected extents
+    extents = {}
+    for user_data in jro.user_data:
+        feature_no = None
+        for key in user_data.keys():
+            if key[:7] == 'feature':
+                feature_no = int(key[7:])
+        if feature_no is not None and 'output' in user_data:
+            extents[feature_no] = user_data['output']
+    for feature_no, expected_extent in enumerate(expected_extents):
+        assert feature_no in extents
+        assert extents[feature_no] == expected_extent
+
+    # Leave time for workers to complete their tasks then flush the store
+    sleep(0.4)
     store_handler._store.flushdb()
 
 

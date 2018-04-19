@@ -34,7 +34,7 @@ class AnalyticsEngineV2(Worker):
     def __init__(self, name, config=None):
         super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, config)
 
-    def analyse(self, function, data, function_params, storage_params, *args, **kwargs):
+    def analyse(self, function, function_params, data, user_tasks, *args, **kwargs):
         '''user - job submit
         AE - gets the job
            - job decomposition
@@ -55,12 +55,14 @@ class AnalyticsEngineV2(Worker):
              - job/result
                - status
         '''
+        query = data['query'] if data and 'query' in data else None
+
         # Decompose
         storage = self.DEFAULT_STORAGE.copy()
-        if storage_params:
-            storage.update(storage_params)
+        if data and 'storage_params' in data:
+            storage.update(data['storage_params'])
         function_type = self._determine_function_type(function)
-        decomposed = self._decompose(function_type, function, data, function_params, storage)
+        decomposed = self._decompose(function_type, function, query, function_params, storage, user_tasks)
         if logging.getLevelName(self.logger.getEffectiveLevel()) == 'DEBUG':
             self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
 
@@ -74,7 +76,7 @@ class AnalyticsEngineV2(Worker):
         # code)
         return FunctionTypes.PICKLED
 
-    def _decompose(self, function_type, function, data, function_params, storage_params):
+    def _decompose(self, function_type, function, data, function_params, storage_params, user_tasks):
         '''Decompose the function and data.
 
         The decomposition of function over data creates one or more jobs. Each job has its own
@@ -84,8 +86,8 @@ class AnalyticsEngineV2(Worker):
         '''
         # == Mock implementation ==
         # Prepare the sub-jobs and base job info
-        jobs = self._create_jobs(function, data, function_params, storage_params)
-        base = self._create_base_job(function_type, function, data, storage_params, jobs)
+        jobs = self._create_jobs(function, data, function_params, storage_params, user_tasks)
+        base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
         return {
             'base': base,
             'jobs': jobs
@@ -123,13 +125,14 @@ class AnalyticsEngineV2(Worker):
             'result_id': result_id,
         })
 
-    def _create_base_job(self, function_type, function, data, storage_params, dependent_jobs):
+    def _create_base_job(self, function_type, function, data, storage_params, user_tasks, dependent_jobs):
         '''Prepare the base job.'''
         if data:
             descriptors = self._create_result_descriptors(data['measurements'], storage_params['chunk'])
             job = {
                 'function_type': function_type,
                 'function': function,
+                'user_tasks': user_tasks,
                 'data': data,
                 'ttl': storage_params['ttl'],
                 'chunk': storage_params['chunk'],
@@ -140,6 +143,7 @@ class AnalyticsEngineV2(Worker):
             job = {
                 'function_type': function_type,
                 'function': function,
+                'user_tasks': user_tasks,
                 'data': data,
                 'ttl': None,
                 'chunk': None,
@@ -150,10 +154,9 @@ class AnalyticsEngineV2(Worker):
         self._store_job(job, dependent_job_ids)
         return job
 
-    def _create_jobs(self, function, data, function_params, storage_params):
+    def _create_jobs(self, function, data, function_params, storage_params, user_tasks):
         '''Decompose data and function into a list of jobs.'''
-        job_data = self._decompose_data(data, storage_params)
-        jobs = self._decompose_function(function, job_data, function_params, storage_params)
+        jobs = self._decompose_function(function, data, function_params, storage_params, user_tasks)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
@@ -177,34 +180,38 @@ class AnalyticsEngineV2(Worker):
         decomposed_data['total_shape'] = total_shape
         return decomposed_data
 
-    def _decompose_function(self, function, data, function_params, storage_params):
+    def _decompose_function(self, function, data, function_params, storage_params, user_tasks):
         '''Decompose a function and data into a list of jobs.'''
         sub_jobs = []
-        if data is None:
-            job = {
-                'function_type': FunctionTypes.PICKLED,
-                'function': function,
-                'data': None,
-                'function_params': function_params,
-                'slice': None,
-                'chunk_id': None,
-                'result_descriptors': {}
-            }
-            sub_jobs.append(job)
-            return sub_jobs
-
-        for chunk_id, s in zip(data['chunk_ids'], data['indices']):
-            job = {
-                'function_type': FunctionTypes.PICKLED,
-                'function': function,
-                'data': data,
-                'function_params': function_params,
-                'slice': s,
-                'chunk_id': chunk_id,
-                'result_descriptors': self._create_result_descriptors(data['query']['measurements'],
-                                                                      storage_params['chunk'])
-            }
-            sub_jobs.append(job)
+        if user_tasks is not None:
+            for user_task in user_tasks:
+                job = {
+                    'function_type': FunctionTypes.PICKLED,
+                    'function': function,
+                    'user_task': user_task,
+                    'data': None,
+                    'function_params': function_params,
+                    'slice': None,
+                    'chunk_id': None,
+                    'result_descriptors': {}
+                }
+                sub_jobs.append(job)
+        elif data is not None:
+            job_data = self._decompose_data(data, storage_params)
+            for chunk_id, s in zip(job_data['chunk_ids'], job_data['indices']):
+                job = {
+                    'function_type': FunctionTypes.PICKLED,
+                    'function': function,
+                    'user_tasks': None,
+                    'data': job_data,
+                    'function_params': function_params,
+                    'slice': s,
+                    'chunk_id': chunk_id,
+                    'result_descriptors': self._create_result_descriptors(
+                        job_data['query']['measurements'],
+                        storage_params['chunk'])
+                }
+                sub_jobs.append(job)
         return sub_jobs
 
     def _create_result_descriptors(self, bands, chunk):

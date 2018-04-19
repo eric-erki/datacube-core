@@ -58,16 +58,21 @@ class AnalyticsClient(object):
         config_p.get(disable_sync_subtasks=False)
 
     # pylint: disable=too-many-locals
-    def submit_python_function(self, function, data, function_params=None, storage_params=None, *args, **kwargs):
+    def submit_python_function(self, function, function_params=None, data=None,
+                               user_tasks=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
-        :param dict data: Dataset descriptor.
         :param dict function_params: Parameters that will be passed to the function.
           This should be kept small, large entries such as large files should be in s3 and the
           url be stored here.
-        :param dict storage_params: Storage parameters, e.g. `{'chunk': (...), 'ttl': -1}` where
+        :param dict data: Dataset descriptor, a dictionary with keys `{'query', 'storage_params'}`
+          whereby `query` is for input description, `storage_params` is for output description.
+          Storage parameters, e.g. `{'chunk': (...), 'ttl': -1}` where
           `ttl` is the life span of the results and `chunk` the preferred result chunking.
+        :param dict function_params: Parameters that will be passed to the function.
+          This should be kept small, large entries such as large files should be in s3 and the
+          url be stored here.
         :param list args: Optional positional arguments for the function.
         :param dict kargs: Optional keyword arguments for the funtion.
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
@@ -92,7 +97,7 @@ class AnalyticsClient(object):
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
 
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(func, data, function_params, storage_params), kwargs=kwargs)
+                                   args=(func, function_params, data, user_tasks), kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis[0], client=self)
         results = analysis[1]
