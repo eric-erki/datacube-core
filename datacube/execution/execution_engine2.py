@@ -107,7 +107,7 @@ class ExecutionEngineV2(Worker):
             for key, value in job['function_params'].items():
                 if not isinstance(value, dict):
                     continue
-                if 'copy_to_input_dir' not in value and not value['copy_to_input_dir']:
+                if 'copy_to_input_dir' not in value or not value['copy_to_input_dir']:
                     continue
                 try:
                     # data = zlib.decompress(value['data'])
@@ -119,7 +119,6 @@ class ExecutionEngineV2(Worker):
                 f = open(input_dir + "/" + value['fname'], "wb")
                 f.write(data)
                 f.close()
-
                 job['function_params'][key] = input_dir + "/" + value['fname']
 
     # pylint: disable=too-many-locals

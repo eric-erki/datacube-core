@@ -55,6 +55,9 @@ class AnalyticsEngineV2(Worker):
              - job/result
                - status
         '''
+        if data and user_tasks:
+            raise ValueError('Only `data` or `user_tasks` can be specified at once')
+
         query = data['query'] if data and 'query' in data else None
 
         # Decompose

@@ -8,7 +8,7 @@ from __future__ import absolute_import
 
 import logging
 from time import sleep
-from sys import version_info
+from pathlib import Path
 import pytest
 from celery import Celery
 import numpy as np
@@ -296,6 +296,36 @@ def check_do_the_math(store_handler, local_config, index):
     store_handler._store.flushdb()
 
 
+def check_submit_invalid_data_and_user_tasks(local_config):
+    '''Test for failure if both data and user_tasks are specified for a job.'''
+
+    def base_function(data, function_params=None, user_data=None):
+        return data
+    data = {
+        'query': {
+            'product': 'ls5_nbar_albers',
+            'measurements': ['blue', 'red'],
+            'x': (149.07, 149.18),
+            'y': (-35.32, -35.28)
+        },
+        'storage_params': {
+            'chunk': (1, 231, 420)
+        }
+    }
+    function_params = {
+        'shp': (Path(__file__).parent / 'data' / 'polygons.shp').as_uri(),
+        'shx': (Path(__file__).parent / 'data' / 'polygons.shx').as_uri(),
+        'dbf': (Path(__file__).parent / 'data' / 'polygons.dbf').as_uri(),
+    }
+    user_tasks = [{'filename': 'polygons.shp',
+                   'feature': n} for n in range(4)]
+    client = AnalyticsClient(local_config)
+    client.update_config(local_config)
+    # Submit invalid action type
+    with pytest.raises(ValueError):
+        client.submit_python_function(base_function, data=data, user_tasks=user_tasks)
+
+
 def check_submit_job_user_tasks(store_handler, local_config, index):
     '''Test the following:
         - the submission of a job with user tasks (instead of automatic data decomposition)
@@ -317,7 +347,7 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
     def base_function(data, function_params=None, user_task=None):
         from pathlib import Path
         from osgeo.gdal import OpenEx
-        filepath = Path(user_task['filepath'])
+        filepath = Path(function_params['input_dir']) / user_task['filename']
         dataSource = OpenEx(str(filepath))
         extent = None
         if dataSource:
@@ -331,7 +361,12 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
         with output_path.open('w') as fh:
             fh.write('Test')
         return extent
-    user_tasks = [{'filepath': 'integration_tests/analytics_execution_engine/data/polygons.shp',
+    function_params = {
+        'shp': (Path(__file__).parent / 'data' / 'polygons.shp').as_uri(),
+        'shx': (Path(__file__).parent / 'data' / 'polygons.shx').as_uri(),
+        'dbf': (Path(__file__).parent / 'data' / 'polygons.dbf').as_uri(),
+    }
+    user_tasks = [{'filename': 'polygons.shp',
                    'feature': n} for n in range(4)]
 
     expected_extents = [
@@ -344,7 +379,8 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
     client = AnalyticsClient(local_config)
     client.update_config(local_config)
     # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, user_tasks=user_tasks)
+    jro, results = client.submit_python_function(base_function, function_params=function_params,
+                                                 user_tasks=user_tasks)
 
     # Wait a while for the main job to complete
     for tstep in range(30):
