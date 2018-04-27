@@ -9,6 +9,9 @@ from __future__ import absolute_import
 import logging
 from time import sleep
 from pathlib import Path
+from urllib.parse import urlparse
+from shutil import rmtree
+from pprint import pformat
 import pytest
 from celery import Celery
 import numpy as np
@@ -132,23 +135,27 @@ def check_submit_job_params(store_handler, local_config, index):
     assert jro.job.status == JobStatuses.COMPLETED
     jro.update()
 
-    # Check user data: since clients cannot see subjobs (and their
-    # IDs) we only check the format of each entry
-    for datum in jro.user_data:
-        assert filename in datum
-        assert 'bucket' in datum[filename]
-        assert 'key' in datum[filename]
-        assert datum[filename]['key'][-len(filename):] == filename
-
     logger.debug('JRO\n{}'.format(jro))
     logger.debug('Store dump\n{}'.format(client._store.str_dump()))
 
-    # Base job should be complete unless something went wrong with worker threads.
-    # submit_python_function currently waits until jobs complete then sets base job status
-    assert jro.job.status == JobStatuses.COMPLETED
+    use_s3 = local_config.execution_engine_config['use_s3']
+    user_data = jro.user_data
+    for datum in user_data:
+        assert filename in datum
+        if use_s3:
+            assert 'bucket' in datum[filename]
+            assert 'key' in datum[filename]
+            assert datum[filename]['key'][-len(filename):] == filename
+        else:
+            filepath = urlparse(datum[filename]).path
+            with Path(filepath).open() as fh:
+                assert fh.read() == 'This is an auxillary output file with some text'
+        # Onus is on end user to clean output files copied locally
+        if 'base_dir' in datum:
+            rmtree(datum['base_dir'])
 
     # Leave time for workers to complete their tasks then flush the store
-    sleep(0.4)
+    sleep(1)
     store_handler._store.flushdb()
 
 
@@ -233,8 +240,13 @@ def check_submit_job(store_handler, local_config, index):
     job_dep = client._store.get_job_dependencies(jro.job.id)
     assert len(job_dep[0]) > 0
 
+    for datum in jro.user_data:
+        # Onus is on end user to clean output files copied locally
+        if 'base_dir' in datum:
+            rmtree(datum['base_dir'])
+
     # Leave time for workers to complete their tasks then flush the store
-    sleep(0.4)
+    sleep(1)
     store_handler._store.flushdb()
 
 
@@ -244,6 +256,8 @@ def check_do_the_math(store_handler, local_config, index):
     """
     logger = logging.getLogger(__name__)
     logger.debug('Started.')
+
+    store_handler._store.flushdb()
 
     # TODO: This kind of function not yet supported:
     # import xarray as xr
@@ -291,7 +305,7 @@ def check_do_the_math(store_handler, local_config, index):
     np.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
 
     # Leave time for workers to complete their tasks then flush the store
-    sleep(0.4)
+    sleep(1)
     print('Store dump\n{}'.format(client._store.str_dump()))
     store_handler._store.flushdb()
 
@@ -350,22 +364,26 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
         filepath = Path(function_params['input_dir']) / user_task['filename']
         dataSource = OpenEx(str(filepath))
         extent = None
+        feature_no = user_task['feature']
         if dataSource:
             layer = dataSource.GetLayer()
-            feature = layer.GetFeature(user_task['feature'])
+            feature = layer.GetFeature(feature_no)
             geom = feature.GetGeometryRef()
             extent = geom.GetEnvelope()
         else:
             print('Could not open {}'.format(filepath))
-        output_path = Path(function_params['output_dir']) / 'feature{}'.format(user_task['feature'])
+        output_path = Path(function_params['output_dir']) / 'sub_dir' / 'feature{:02d}.txt'.format(feature_no)
+        output_path.parent.mkdir()
         with output_path.open('w') as fh:
-            fh.write('Test')
+            fh.write('Test: {}\n'.format(feature_no))
         return extent
+
     function_params = {
         'shp': (Path(__file__).parent / 'data' / 'polygons.shp').as_uri(),
         'shx': (Path(__file__).parent / 'data' / 'polygons.shx').as_uri(),
         'dbf': (Path(__file__).parent / 'data' / 'polygons.dbf').as_uri(),
     }
+
     user_tasks = [{'filename': 'polygons.shp',
                    'feature': n} for n in range(4)]
 
@@ -393,21 +411,32 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
     logger.debug('JRO\n{}'.format(jro.results))
     logger.debug('Store dump\n{}'.format(client._store.str_dump()))
 
-    # Check we obtain the expected extents
+    # Check we obtain the expected file contents and extents
     extents = {}
-    for user_data in jro.user_data:
+    use_s3 = local_config.execution_engine_config['use_s3']
+    user_data = jro.user_data
+    print('JRO User data:\n{}'.format(pformat(user_data)))
+    for datum in user_data:
         feature_no = None
-        for key in user_data.keys():
-            if key[:7] == 'feature':
-                feature_no = int(key[7:])
-        if feature_no is not None and 'output' in user_data:
-            extents[feature_no] = user_data['output']
+        for key, value in datum.items():
+            if key[8:15] == 'feature':
+                feature_no = int(key[15:17])
+                filepath = urlparse(value).path
+                if not use_s3:
+                    with Path(filepath).open() as fh:
+                        assert fh.read() == 'Test: {}\n'.format(feature_no)
+                # Onus is on end user to clean output files copied locally
+                if 'base_dir' in datum:
+                    rmtree(datum['base_dir'])
+                if 'output' in datum:
+                    extents[feature_no] = datum['output']
+                    break
     for feature_no, expected_extent in enumerate(expected_extents):
         assert feature_no in extents
         assert extents[feature_no] == expected_extent
 
     # Leave time for workers to complete their tasks then flush the store
-    sleep(0.4)
+    sleep(1)
     store_handler._store.flushdb()
 
 

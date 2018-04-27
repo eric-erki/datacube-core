@@ -1,18 +1,13 @@
 from __future__ import absolute_import, print_function
 
-from shutil import rmtree
 from os import makedirs, walk
-from os.path import expanduser, relpath
 from sys import version_info
-import numpy as np
-import zstd
-from dill import loads
-import zlib
 import boto3
 from boto3.s3.transfer import TransferConfig
 
 from datacube import Datacube
 from datacube.engine_common.store_workers import WorkerTypes
+from datacube.engine_common.file_transfer import FileTransfer
 from datacube.analytics.worker import Worker
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
@@ -40,6 +35,7 @@ class ExecutionEngineV2(Worker):
 
     def __init__(self, name, config=None):
         super(ExecutionEngineV2, self).__init__(name, WorkerTypes.EXECUTION, config, dc=False)
+        self._file_transfer = FileTransfer()
 
     def _analyse(self, function, data, storage_params, *args, **kwargs):
         """stub to call _decompose to perform data decomposition if required"""
@@ -61,9 +57,7 @@ class ExecutionEngineV2(Worker):
     def _compute_result(self, function, data, function_params=None, user_task=None):
         '''Run the function on the data.'''
         # TODO: restore function according to its type
-        cctx = zstd.ZstdDecompressor()
-        function = cctx.decompress(function)
-        func = loads(function)
+        func = self._file_transfer.deserialise(function)
         return func(data, function_params, user_task)
 
     def _save_array_in_s3(self, array, result_descriptor, chunk_id, use_s3=False):
@@ -71,12 +65,7 @@ class ExecutionEngineV2(Worker):
         s3_key = '_'.join([result_descriptor['base_name'], str(chunk_id)])
         self.logger.debug('Persisting computed result to %s-%s',
                           result_descriptor['bucket'], s3_key)
-        cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
-        if version_info >= (3, 5):
-            data = bytes(array.data)
-        else:
-            data = bytes(np.ascontiguousarray(array).data)
-        data = cctx.compress(data)
+        data = self._file_transfer.compress_array(array)
         s3io = S3IO(use_s3, None)
         s3io.put_bytes(result_descriptor['bucket'], s3_key, data, True)
 
@@ -85,22 +74,8 @@ class ExecutionEngineV2(Worker):
             job['function_params'] = {}
         if 'user_task' not in job or job['user_task'] is None:
             job['user_task'] = {}
-
-        job_id = job['id']
-
-        base_dir = expanduser("~") + "/EEv2/" + str(job_id)
-        input_dir = base_dir + "/input"
-        output_dir = base_dir + "/output"
-
-        job['function_params']['input_dir'] = input_dir
-        job['function_params']['output_dir'] = output_dir
-
-        # Create input input_dir & output_dir
-        try:
-            makedirs(input_dir)
-            makedirs(output_dir)
-        except OSError:
-            pass
+        job['function_params']['input_dir'] = str(self._file_transfer.input_dir)
+        job['function_params']['output_dir'] = str(self._file_transfer.output_dir)
 
         # Uncompress and populate input directory input args
         if 'function_params' in job:
@@ -109,56 +84,32 @@ class ExecutionEngineV2(Worker):
                     continue
                 if 'copy_to_input_dir' not in value or not value['copy_to_input_dir']:
                     continue
-                try:
-                    # data = zlib.decompress(value['data'])
-                    cctx = zstd.ZstdDecompressor()
-                    data = cctx.decompress(value['data'])
-                except zlib.error:
-                    continue
-
-                f = open(input_dir + "/" + value['fname'], "wb")
-                f.write(data)
-                f.close()
-                job['function_params'][key] = input_dir + "/" + value['fname']
+                filepath = self._file_transfer.decompress_to_file(value['data'], value['fname'])
+                job['function_params'][key] = filepath
 
     # pylint: disable=too-many-locals
     def post_process(self, job, user_data, use_s3=False):
         job_id = job['id']
-
-        base_dir = expanduser("~") + "/EEv2/" + str(job_id)
-        input_dir = base_dir + "/input"
-        output_dir = base_dir + "/output"
-        s3_bucket = 'eev2'
-        s3_base = str(job_id) + "/output"
-
         output_files = {}
-        # Upload output directory to s3, file by file
-        for dirname, _, files in walk(output_dir):
-            rel_path = relpath(dirname, output_dir)
-            for filename in files:
-                if rel_path == '.':
-                    s3_key = s3_base + "/" + filename
-                else:
-                    s3_key = s3_base + "/" + rel_path + "/" + filename
-                print(s3_bucket, s3_key, dirname + "/" + filename)
-                if use_s3:
-                    s3 = boto3.client('s3')
-                    transfer_config = TransferConfig(multipart_chunksize=8*1024*1024, multipart_threshold=8*1024*1024,
-                                                     max_concurrency=10)
-                    s3.upload_file(dirname + "/" + filename, s3_bucket, s3_key, Config=transfer_config)
-                else:
-                    # store somewhere else.
-                    pass
-                if rel_path != '.':
-                    output_files[rel_path + "/" + filename] = {'bucket': s3_bucket, 'key': s3_key}
-                else:
-                    output_files[filename] = {'bucket': s3_bucket, 'key': s3_key}
+        if use_s3:
+            s3_bucket = 'eev2'
+            s3 = boto3.client('s3')
+            transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
+                                             multipart_threshold=8*1024*1024,
+                                             max_concurrency=10)
+            for filepath in self._file_transfer.output_dir.rglob('*'):
+                if filepath.is_file():
+                    relpath = str(filepath.relative_to(self._file_transfer.output_dir))
+                    s3.upload_file(str(filepath), s3_bucket, str(filepath), Config=transfer_config)
+                    output_files[relpath] = 's3://{}{}'.format(s3_bucket, str(filepath))
+        else:
+            # Last resort: store the whole output folder as compressed archive in redis
+            archive = self._file_transfer.get_archive()
+            if archive:
+                output_files[FileTransfer.ARCHIVE] = archive
 
         # Clean up base directory
-        try:
-            rmtree(base_dir)
-        except OSError:
-            pass
+        self._file_transfer.cleanup()
 
         # store & return output metadata dict
         user_data.update(output_files)

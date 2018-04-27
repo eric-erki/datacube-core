@@ -47,7 +47,8 @@ from enum import Enum
 import xarray as xr
 
 import datacube
-from datacube.engine_common.store_handler import ResultTypes
+from datacube.engine_common.store_handler import ResultTypes, JobStatuses
+from datacube.engine_common.file_transfer import FileTransfer
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
@@ -477,6 +478,7 @@ class UserData(object):
         '''Prepare the user data for the corresponding job ID.'''
         self._jro = jro
         self._job_id = job_info['id']
+        self._user_data = None
 
     def to_dict(self):
         '''Convenience for string representation.'''
@@ -499,7 +501,14 @@ class UserData(object):
     @property
     def user_data(self):
         '''Fetch the user data from the server.'''
-        user_data = None
-        if self._jro.client:
-            user_data = self._jro.client.get_user_data(self.job_id)
-        return user_data
+        if not self._user_data:
+            if self._jro.job.status == JobStatuses.COMPLETED and self._jro.client:
+                self._user_data = self._jro.client.get_user_data(self.job_id)
+                for datum in self._user_data:
+                    if FileTransfer.ARCHIVE in datum:
+                        # Restore archive to local temp dir and update user_data file entries
+                        file_transfer = FileTransfer()
+                        restored = file_transfer.restore_archive(datum[FileTransfer.ARCHIVE])
+                        datum.update(restored)
+                        del datum[FileTransfer.ARCHIVE]
+        return self._user_data

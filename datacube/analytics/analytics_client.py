@@ -4,13 +4,11 @@ submitting jobs in a cluster and receiving job result objects in return.'''
 from __future__ import absolute_import
 
 import os
-import zlib
-import zstd
 import logging
 from celery import Celery
-from dill import dumps
 
 from datacube.engine_common.store_handler import StoreHandler
+from datacube.engine_common.file_transfer import FileTransfer
 from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
@@ -48,6 +46,7 @@ class AnalyticsClient(object):
         '''
         self.logger = logging.getLogger(self.__class__.__name__)
         self._store = StoreHandler(**config.redis_config)
+        self._file_transfer = FileTransfer()
         # global app
         app.conf.update(result_backend=config.redis_celery_config['url'],
                         broker_url=config.redis_celery_config['url'])
@@ -78,9 +77,7 @@ class AnalyticsClient(object):
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
           subjob results.
         '''
-        func = dumps(function)
-        cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
-        func = cctx.compress(func)
+        func = self._file_transfer.serialise(function)
 
         # compress files in function_params
         if function_params:
@@ -92,8 +89,7 @@ class AnalyticsClient(object):
                     fname = os.path.basename(url.path)
                     with open(url.path, "rb") as _data:
                         f = _data.read()
-                        # _data = zlib.compress(f, 1)
-                        _data = cctx.compress(f)
+                        _data = self._file_transfer.compress(f)
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
 
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
