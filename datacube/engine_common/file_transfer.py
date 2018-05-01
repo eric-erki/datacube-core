@@ -23,7 +23,7 @@ class FileTransfer(object):
     def cleanup(self):
         if self._base_dir:
             try:
-                rmtree(self._base_dir)
+                rmtree(str(self._base_dir))
                 self._base_dir = None
             except OSError:
                 raise ValueError('Could not clean up temporary directory: {}'.format(
@@ -100,7 +100,7 @@ class FileTransfer(object):
         from io import BytesIO
         data_stream = BytesIO()
         with tarfile.open(fileobj=data_stream, mode='w') as tar:
-            tar.add(self.output_dir, arcname='')
+            tar.add(str(self.output_dir), arcname='')
         data_stream.seek(0)
         # Compress the archive with the same compressor use in this class
         return self.compress(data_stream.read())
@@ -113,7 +113,7 @@ class FileTransfer(object):
         data_stream = BytesIO(self.decompress(data))
         user_data = {'base_dir': str(self.base_dir)}
         with tarfile.open(fileobj=data_stream, mode='r') as tar:
-            tar.extractall(self.base_dir)
+            tar.extractall(str(self.base_dir))
             for member in tar.getmembers():
                 if member.isfile():
                     filepath = self.base_dir / member.name
