@@ -27,7 +27,7 @@ addons:
     - postgresql
   apt:
     sources:
-      - sourceline: ppa:nextgis/ppa
+      - sourceline: ppa:ubuntugis/ubuntugis-unstable
     packages:
       - gdal-bin
       - libgdal-dev
