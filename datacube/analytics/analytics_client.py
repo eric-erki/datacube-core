@@ -58,20 +58,21 @@ class AnalyticsClient(object):
 
     # pylint: disable=too-many-locals
     def submit_python_function(self, function, function_params=None, data=None,
-                               user_tasks=None, *args, **kwargs):
+                               user_tasks=None, check_period=1, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
-        :param dict function_params: Parameters that will be passed to the function.
+        :param dict function_params: Shared parameters that will be passed to the function.
           This should be kept small, large entries such as large files should be in s3 and the
           url be stored here.
         :param dict data: Dataset descriptor, a dictionary with keys `{'query', 'storage_params'}`
           whereby `query` is for input description, `storage_params` is for output description.
           Storage parameters, e.g. `{'chunk': (...), 'ttl': -1}` where
           `ttl` is the life span of the results and `chunk` the preferred result chunking.
-        :param dict function_params: Parameters that will be passed to the function.
-          This should be kept small, large entries such as large files should be in s3 and the
-          url be stored here.
+        :param dict user_tasks: Local parameters that will be passed to the function.
+           A job will be created for each (function, function_params, user task)
+        :param int check_period: Period to check job completion status.
+          JRO.update() will be called upon completion to update result metadata.
         :param list args: Optional positional arguments for the function.
         :param dict kargs: Optional keyword arguments for the funtion.
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
@@ -96,6 +97,7 @@ class AnalyticsClient(object):
                                    args=(func, function_params, data, user_tasks), kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis[0], client=self)
+        jro.checkForUpdate(check_period)
         results = analysis[1]
         return (jro, results)
 

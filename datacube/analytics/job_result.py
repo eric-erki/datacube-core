@@ -36,6 +36,7 @@ Note: Interim JobResult Code for incremental testing:
 
 from __future__ import absolute_import, print_function, division
 
+import threading
 import numpy as np
 from six import integer_types
 from six.moves import zip
@@ -103,6 +104,15 @@ class JobResult(object):
 
     def update(self):
         self.client.update_jro(self)
+
+    def checkForUpdate(self, period):
+        """Starts a periodic timer to check and update the JRO
+        """
+        if self.job.status == JobStatuses.COMPLETED:
+            self.update()
+            print("Job is Completed")
+        else:
+            threading.Timer(period, self.checkForUpdate, [period]).start()
 
 
 class Job(object):
