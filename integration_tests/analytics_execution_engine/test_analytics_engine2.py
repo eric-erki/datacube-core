@@ -102,7 +102,7 @@ def check_submit_job_params(store_handler, local_config, index):
         # Example of user-data (auxillary file)
         with filepath.open('w') as f:
             f.write('This is an auxillary output file with some text')
-        return data
+        return data['query_1']
 
     function_params = {
         'filename': filename,
@@ -110,10 +110,18 @@ def check_submit_job_params(store_handler, local_config, index):
     }
     data = {
         'query': {
-            'product': 'ls5_nbar_albers',
-            'measurements': ['blue', 'red'],
-            'x': (149.07, 149.18),
-            'y': (-35.32, -35.28)
+            'query_1': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            },
+            'query_2': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            }
         },
         'storage_params': {
             'chunk': (1, 120, 420)
@@ -178,13 +186,21 @@ def check_submit_job(store_handler, local_config, index):
     store_handler._store.flushdb()
 
     def base_function(data, function_params=None, user_data=None):
-        return data
+        return data['query_1']
     data = {
         'query': {
-            'product': 'ls5_nbar_albers',
-            'measurements': ['blue', 'red'],
-            'x': (149.07, 149.18),
-            'y': (-35.32, -35.28)
+            'query_1': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            },
+            'query_2': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            }
         },
         'storage_params': {
             'chunk': (1, 231, 420)
@@ -267,14 +283,22 @@ def check_do_the_math(store_handler, local_config, index):
 
     # Simple transform
     def band_transform(data, function_params=None, user_data=None):
-        return data + 1000
+        return data['query_1'] + 1000
 
     data = {
         'query': {
-            'product': 'ls5_nbar_albers',
-            'measurements': ['blue', 'red'],
-            'x': (149.07, 149.18),
-            'y': (-35.32, -35.28)
+            'query_1': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            },
+            'query_2': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            }
         },
         'storage_params': {
             'chunk': (1, 231, 420)
@@ -302,7 +326,7 @@ def check_do_the_math(store_handler, local_config, index):
     # Retrieve data directly and check that bands are transformed
     dc = Datacube(index=index)
     data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-    np.testing.assert_array_equal(returned_calc.values, band_transform(data_array.red.values))
+    np.testing.assert_array_equal(returned_calc.values, data_array.red.values + 1000)
 
     # Leave time for workers to complete their tasks then flush the store
     sleep(1)
@@ -314,13 +338,21 @@ def check_submit_invalid_data_and_user_tasks(local_config):
     '''Test for failure if both data and user_tasks are specified for a job.'''
 
     def base_function(data, function_params=None, user_data=None):
-        return data
+        return data['query_1']
     data = {
         'query': {
-            'product': 'ls5_nbar_albers',
-            'measurements': ['blue', 'red'],
-            'x': (149.07, 149.18),
-            'y': (-35.32, -35.28)
+            'query_1': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            },
+            'query_2': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            }
         },
         'storage_params': {
             'chunk': (1, 231, 420)

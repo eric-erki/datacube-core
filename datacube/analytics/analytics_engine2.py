@@ -131,7 +131,9 @@ class AnalyticsEngineV2(Worker):
     def _create_base_job(self, function_type, function, data, storage_params, user_tasks, dependent_jobs):
         '''Prepare the base job.'''
         if data:
-            descriptors = self._create_result_descriptors(data['measurements'], storage_params['chunk'])
+            # TODO: Fix this with delayed descriptors, create result descriptors for only first one.
+            descriptors = self._create_result_descriptors(data[sorted(data)[0]]['measurements'], storage_params['chunk'])
+
             job = {
                 'function_type': function_type,
                 'function': function,
@@ -171,16 +173,22 @@ class AnalyticsEngineV2(Worker):
         # TODO: Add a loop: for dataset in datasets...
         if data is None:
             return None
-        metadata = self._datacube.metadata_for_load(**data)
-        total_shape = metadata['grouped'].shape + metadata['geobox'].shape
-        _, indices, chunk_ids = S3LIO.create_indices(total_shape, storage_params['chunk'], '^_^')
+
         from copy import deepcopy
         decomposed_data = {}
-        decomposed_data['query'] = deepcopy(data)
-        decomposed_data['metadata'] = metadata
-        decomposed_data['indices'] = indices
-        decomposed_data['chunk_ids'] = chunk_ids
-        decomposed_data['total_shape'] = total_shape
+
+        for name, query in data.items():
+            metadata = self._datacube.metadata_for_load(**query)
+            total_shape = metadata['grouped'].shape + metadata['geobox'].shape
+            _, indices, chunk_ids = S3LIO.create_indices(total_shape, storage_params['chunk'], '^_^')
+            decomposed_item = {}
+            decomposed_item['query'] = deepcopy(query)
+            decomposed_item['metadata'] = metadata
+            decomposed_item['indices'] = indices
+            decomposed_item['chunk_ids'] = chunk_ids
+            decomposed_item['total_shape'] = total_shape
+            decomposed_data[name] = decomposed_item
+
         return decomposed_data
 
     def _decompose_function(self, function, data, function_params, storage_params, user_tasks):
@@ -201,7 +209,9 @@ class AnalyticsEngineV2(Worker):
                 sub_jobs.append(job)
         elif data is not None:
             job_data = self._decompose_data(data, storage_params)
-            for chunk_id, s in zip(job_data['chunk_ids'], job_data['indices']):
+            # TODO: fix this with delayed descriptors, this works because of common decomposition.
+            first_query = job_data[sorted(job_data)[0]]
+            for chunk_id, s in zip(first_query['chunk_ids'], first_query['indices']):
                 job = {
                     'function_type': FunctionTypes.PICKLED,
                     'function': function,
@@ -211,7 +221,7 @@ class AnalyticsEngineV2(Worker):
                     'slice': s,
                     'chunk_id': chunk_id,
                     'result_descriptors': self._create_result_descriptors(
-                        job_data['query']['measurements'],
+                        first_query['query']['measurements'],
                         storage_params['chunk'])
                 }
                 sub_jobs.append(job)

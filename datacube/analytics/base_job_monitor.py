@@ -50,6 +50,13 @@ class BaseJobMonitor(Worker):
 
         # Get first worker job and copy properties from it to base job
         job0 = self._decomposed['jobs'][0]
+
+        # TODO: Fix this with delayed descriptors, use total_shape from first query.
+        if job0['data']:
+            total_shape = job0['data'][sorted(job0['data'])[0]]['total_shape']
+        else:
+            total_shape = None
+
         # TODO: this way of getting base result shape will not work if job data decomposed into
         # smaller chunks
         for array_name, result_descriptor in self._decomposed['base']['result_descriptors'].items():
@@ -57,6 +64,6 @@ class BaseJobMonitor(Worker):
             sub_result_id = job0['result_descriptors'][array_name]['id']
             dtype = self._store.get_result(sub_result_id).descriptor['dtype']
             self.update_result_descriptor(result_descriptor,
-                                          job0['data']['total_shape'],
+                                          total_shape,
                                           dtype)
         self.job_finishes(self._decomposed['base'])

@@ -124,19 +124,23 @@ class ExecutionEngineV2(Worker):
 
         # Get data for worker here
         if job['data']:
-            data = self._get_data(job['data']['metadata'], job['slice'])
-            if not set(data.data_vars) == set(job['result_descriptors'].keys()):
-                raise ValueError('Inconsistent variables in data and result descriptors:\n{} vs. {}'.format(
-                    set(data.data_vars), set(job['result_descriptors'].keys())))
+            data_dict = {}
+            for name, job_data in job['data'].items():
+                data = self._get_data(job_data['metadata'], job['slice'])
+                data_dict[name] = data
+
+                # if not set(data.data_vars) == set(job['result_descriptors'].keys()):
+                #     raise ValueError('Inconsistent variables in data and result descriptors:\n{} vs. {}'.format(
+                #         set(data.data_vars), set(job['result_descriptors'].keys())))
         else:
-            data = None
+            data_dict = None
 
         # Execute function here
-        computed = self._compute_result(job['function'], data,
+        computed = self._compute_result(job['function'], data_dict,
                                         job['function_params'], job['user_task'])
 
         user_data = {}
-        if data:
+        if data_dict:
             # Save results here
             # map input to output
             # todo: pass in parameters from submit_python_function
