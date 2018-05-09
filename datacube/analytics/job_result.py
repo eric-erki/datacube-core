@@ -391,6 +391,11 @@ class LazyArray(object):
         """
         pass
 
+    def to_netcdf(self, path=None):
+        """Exports LazyArray to a NetCDF file.
+        """
+        self[:].to_netcdf(path=path)
+
 
 class Results(object):
     """
@@ -453,6 +458,32 @@ class Results(object):
 
     def metadata(self):
         pass
+
+    @staticmethod
+    def save(array, chunk_size, base_name, bucket, use_s3):
+        """Saves an array to s3 and returns the array descriptor.
+        """
+        s3lio = S3LIO(True, use_s3, None)
+        s3lio.put_array_in_s3_mp(array, chunk_size, base_name, bucket)
+        array_info = {}
+        array_info['id'] = None
+        if use_s3:
+            array_info['type'] = ResultTypes.S3IO
+        else:
+            array_info['type'] = ResultTypes.FILE
+        array_info['load_type'] = LoadType.EAGER
+        array_info['base_name'] = base_name
+        array_info['bucket'] = bucket
+        array_info['shape'] = array.shape
+        array_info['chunk'] = chunk_size
+        array_info['dtype'] = array.dtype
+        return array_info
+
+    @staticmethod
+    def load(array_info):
+        """Construct a LazyArray from array_info.
+        """
+        return LazyArray(array_info)
 
     def delete(self):
         """deletes all results from storage:
