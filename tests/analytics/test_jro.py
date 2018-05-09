@@ -18,5 +18,5 @@ class TestJRO(object):
         descriptor = Results.save(x, (2, 2, 2), "lazy_array", "arrayio", False)
         array = Results.load(descriptor)
         assert np.array_equal(x, array[:])
-        # array.to_netcdf(tmpdir + "/test.nc")
-        # assert os.path.isfile(tmpdir + "/test.nc")
+        array.to_netcdf(tmpdir + "/test.nc")
+        assert os.path.isfile(tmpdir + "/test.nc")
