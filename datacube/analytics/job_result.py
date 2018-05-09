@@ -394,7 +394,7 @@ class LazyArray(object):
     def to_netcdf(self, path=None):
         """Exports LazyArray to a NetCDF file.
         """
-        self[:].to_netcdf(path=path)
+        self[:].to_netcdf(path=path, engine='netcdf4')
 
 
 class Results(object):
