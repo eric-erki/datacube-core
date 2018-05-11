@@ -24,7 +24,7 @@ class Worker(object):
         self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),
                                           WorkerStatuses.ALIVE)
 
-    def update_result_descriptor(self, descriptor, shape, dtype):
+    def update_result_descriptor(self, descriptor, shape, dtype, xarray_descriptor=None):
         # Update memory object
         # descriptor['shape'] = shape
         # if descriptor['chunk'] is None:
@@ -41,6 +41,8 @@ class Worker(object):
         if result.descriptor['chunk'] is None:
             result.descriptor['chunk'] = shape
         result.descriptor['dtype'] = dtype
+        if xarray_descriptor:
+            result.descriptor['xarray_descriptor'] = xarray_descriptor
         self._store.update_result(result_id, result)
 
     def job_starts(self, job):

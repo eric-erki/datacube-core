@@ -4,6 +4,7 @@ from os import makedirs, walk
 from sys import version_info
 import boto3
 from boto3.s3.transfer import TransferConfig
+from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolution
 
 from datacube import Datacube
 from datacube.engine_common.store_workers import WorkerTypes
@@ -68,6 +69,19 @@ class ExecutionEngineV2(Worker):
         data = self._file_transfer.compress_array(array)
         s3io = S3IO(use_s3, None)
         s3io.put_bytes(result_descriptor['bucket'], s3_key, data, True)
+
+    def _xarray_descriptor(self, array):
+        d = {'coords': {}, 'attrs': decode_numpy_dict_values(array.attrs),
+             'dims': array.dims}
+        for k in array.coords:
+            data = ensure_us_time_resolution(array[k].values).tolist()
+            d['coords'].update({
+                k: {'data': data,
+                    'dims': array[k].dims,
+                    'attrs': decode_numpy_dict_values(array[k].attrs)}})
+        d.update({'data': None,
+                  'name': array.name})
+        return d
 
     def pre_process(self, job):
         if 'function_params' not in job or job['function_params'] is None:
@@ -151,7 +165,7 @@ class ExecutionEngineV2(Worker):
                 base_result_descriptor = base_results[array_name]
                 array = computed[array_name]
                 # Update result descriptor based on processed data
-                self.update_result_descriptor(descriptor, array.shape, array.dtype)
+                self.update_result_descriptor(descriptor, array.shape, array.dtype, self._xarray_descriptor(array))
                 self._save_array_in_s3(array, base_result_descriptor, job['chunk_id'], self._ee_config['use_s3'])
         else:
             user_data = {'output': computed}
