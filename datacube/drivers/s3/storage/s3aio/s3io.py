@@ -487,7 +487,7 @@ class S3IO(object):
                     break
         else:
             directory = self.file_path + "/" + str(s3_bucket)
-            if not os.path.exists(directory):
+            if not (os.path.exists(directory) and os.path.exists(directory + "/" + str(s3_key))):
                 return None
             f = open(directory + "/" + str(s3_key), "rb")
             f.seek(0, 0)
@@ -523,7 +523,7 @@ class S3IO(object):
                 break
         else:
             directory = self.file_path + "/" + str(s3_bucket)
-            if not os.path.exists(directory):
+            if not (os.path.exists(directory) and os.path.exists(directory + "/" + str(s3_key))):
                 return None
             f = open(directory + "/" + str(s3_key), "rb")
             f.seek(s3_start, 0)

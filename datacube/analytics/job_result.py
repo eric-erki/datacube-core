@@ -46,6 +46,7 @@ from dask.base import tokenize
 from dask.array import Array
 from enum import Enum
 import xarray as xr
+from copy import deepcopy
 
 import datacube
 from datacube.engine_common.store_handler import ResultTypes, JobStatuses
@@ -219,6 +220,7 @@ class LazyArray(object):
         self._type = self._array_info['type']
         self._load_type = self._array_info['load_type']
         self._cache = {}
+        self._xarray_descriptor = None
 
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             self._base_name = self._array_info['base_name']
@@ -309,8 +311,14 @@ class LazyArray(object):
             zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
 
             if self._load_type == LoadType.EAGER:
+                '''
+                xarray_dict = self._slice_metadata(self._xarray_descriptor, bounded_slice)
+                xarray_dict['data'] = s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
+                                                                  bounded_slice, self._bucket).to_list()
+                return xr.from_dict(xarray_dict)
+                '''
                 return xr.DataArray(s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
-                                                                bounded_slice, self._bucket))
+                                                                bounded_slice, self._bucket, use_geo=True))
             elif self._load_type == LoadType.EAGER_CACHED:
                 missing_chunks = []
                 for a in zipped:
@@ -329,6 +337,12 @@ class LazyArray(object):
                 for _, data_slice, local_slice, _, _, chunk_id in zipped:
                     data[data_slice] = self._cache[chunk_id][local_slice]
 
+                if not self._xarray_descriptor:
+                    self._xarray_descriptor = s3lio.get_coords(self._bucket, self._base_name)
+                if self._xarray_descriptor:
+                    xarray_descriptor = self._slice_metadata(self._xarray_descriptor, bounded_slice)
+                    xarray_descriptor['data'] = data.tolist()
+                    return xr.DataArray.from_dict(xarray_descriptor)
                 return data
             elif self._load_type == LoadType.DASK:
                 full_slice = self._bounded_slice((slice(None, None),), self._shape)
@@ -373,6 +387,12 @@ class LazyArray(object):
 
         return bounded_slice
 
+    def _slice_metadata(self, descriptor, array_slice):
+        d = deepcopy(descriptor)
+        for dim, s in zip(d['dims'], array_slice):
+            d['coords'][dim]['data'] = d['coords'][dim]['data'][s]
+        return d
+
     def __setitem__(self, slices, value):
         """Slicing operator to modify data stored on S3/DataCube
         """
@@ -383,6 +403,32 @@ class LazyArray(object):
         #     yield dc.save(...)
         # else:
         #     raise Exception("Undefied storage type")
+
+    @staticmethod
+    def save(array, chunk_size, base_name, bucket, use_s3):
+        """Saves an array to s3 and returns the array descriptor.
+        """
+        s3lio = S3LIO(True, use_s3, None)
+        s3lio.put_array_in_s3_mp(array, chunk_size, base_name, bucket, False, True)
+        array_info = {}
+        array_info['id'] = None
+        if use_s3:
+            array_info['type'] = ResultTypes.S3IO
+        else:
+            array_info['type'] = ResultTypes.FILE
+        array_info['load_type'] = LoadType.EAGER
+        array_info['base_name'] = base_name
+        array_info['bucket'] = bucket
+        array_info['shape'] = array.shape
+        array_info['chunk'] = chunk_size
+        array_info['dtype'] = array.dtype
+        return array_info
+
+    @staticmethod
+    def load(array_info):
+        """Construct a LazyArray from array_info.
+        """
+        return LazyArray(array_info)
 
     def delete(self):
         """deletes the result from storage:
@@ -459,31 +505,6 @@ class Results(object):
     def metadata(self):
         pass
 
-    @staticmethod
-    def save(array, chunk_size, base_name, bucket, use_s3):
-        """Saves an array to s3 and returns the array descriptor.
-        """
-        s3lio = S3LIO(True, use_s3, None)
-        s3lio.put_array_in_s3_mp(array, chunk_size, base_name, bucket)
-        array_info = {}
-        array_info['id'] = None
-        if use_s3:
-            array_info['type'] = ResultTypes.S3IO
-        else:
-            array_info['type'] = ResultTypes.FILE
-        array_info['load_type'] = LoadType.EAGER
-        array_info['base_name'] = base_name
-        array_info['bucket'] = bucket
-        array_info['shape'] = array.shape
-        array_info['chunk'] = chunk_size
-        array_info['dtype'] = array.dtype
-        return array_info
-
-    @staticmethod
-    def load(array_info):
-        """Construct a LazyArray from array_info.
-        """
-        return LazyArray(array_info)
 
     def delete(self):
         """deletes all results from storage:

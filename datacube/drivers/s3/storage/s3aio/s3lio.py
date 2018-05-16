@@ -18,6 +18,10 @@ from itertools import repeat, product
 from pathos.multiprocessing import ProcessPool
 from pathos.threading import ThreadPool
 from pathos.multiprocessing import freeze_support, cpu_count
+from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolution
+from xarray import DataArray
+from dill import dumps, loads
+from copy import deepcopy
 
 try:
     from StringIO import StringIO
@@ -26,6 +30,7 @@ except ImportError:
 from .s3io import generate_array_name
 from .s3aio import S3AIO
 
+# pylint: disable=too-many-public-methods
 
 class S3LIO(object):
     DECIMAL_PLACES = 6
@@ -107,7 +112,29 @@ class S3LIO(object):
             keys = [hashlib.md5(k.encode('utf-8')).hexdigest()[0:6] + '_' + k for k in keys]
         return keys, idx, chunk_ids
 
-    def put_array_in_s3(self, array, chunk_size, base_name, bucket, spread=False):
+    def store_xarray_descriptor(self, array, s3_bucket, base_name):
+        if not isinstance(array, DataArray):
+            return
+        d = {'coords': {}, 'attrs': decode_numpy_dict_values(array.attrs),
+             'dims': array.dims}
+        for k in array.coords:
+            data = ensure_us_time_resolution(array[k].values).tolist()
+            d['coords'].update({
+                k: {'data': data,
+                    'dims': array[k].dims,
+                    'attrs': decode_numpy_dict_values(array[k].attrs)}})
+        d.update({'data': None,
+                  'name': array.name})
+
+        data = dumps(d)
+
+        if self.enable_compression:
+            cctx = zstd.ZstdCompressor(level=9, write_content_size=True)
+            data = cctx.compress(data)
+
+        self.s3aio.s3io.put_bytes(s3_bucket, base_name + '_geo', data)
+
+    def put_array_in_s3(self, array, chunk_size, base_name, bucket, spread=False, geo=False):
         """Put array in S3.
 
         :param ndarray array: array to be put into S3
@@ -119,9 +146,11 @@ class S3LIO(object):
         """
         keys, idx, chunk_ids = self.create_indices(array.shape, chunk_size, base_name, spread)
         self.shard_array_to_s3(array, idx, bucket, keys)
+        if geo:
+            self.store_xarray_descriptor(array, bucket, base_name)
         return list(zip(keys, idx, chunk_ids))
 
-    def put_array_in_s3_mp(self, array, chunk_size, base_name, bucket, spread=False):
+    def put_array_in_s3_mp(self, array, chunk_size, base_name, bucket, spread=False, geo=False):
         """Put array in S3 in parallel.
 
         :param ndarray array: array to be put into S3
@@ -133,6 +162,8 @@ class S3LIO(object):
         """
         keys, idx, chunk_ids = self.create_indices(array.shape, chunk_size, base_name, spread)
         self.shard_array_to_s3_mp(array, idx, bucket, keys)
+        if geo:
+            self.store_xarray_descriptor(array, bucket, base_name)
         return list(zip(keys, idx))
 
     def shard_array_to_s3(self, array, indices, s3_bucket, s3_keys):
@@ -350,10 +381,19 @@ class S3LIO(object):
                 full_slice += (slice(0, i),)
             return self.s3aio.get_slice_by_bbox(full_slice, shape, dtype, s3_bucket, s3_key, True)
 
+    def get_coords(self, s3_bucket, base_location):
+        xarray_descriptor = self.s3aio.s3io.get_bytes(s3_bucket, base_location + "_geo")
+        if xarray_descriptor:
+            cctx = zstd.ZstdDecompressor()
+            xarray_descriptor = cctx.decompress(xarray_descriptor)
+            xarray_descriptor = loads(xarray_descriptor)
+            return xarray_descriptor
+        return None
+
     # integer index data retrieval.
     # pylint: disable=too-many-locals
     def get_data_unlabeled(self, base_location, macro_shape, micro_shape, dtype, array_slice, s3_bucket,
-                           use_hash=False):
+                           use_hash=False, use_geo=False):
         """Gets integer indexed data from S3.
 
         :param str base_location: The base location of the requested data.
@@ -363,6 +403,7 @@ class S3LIO(object):
         :param tuple array_slice: The requested nD array slice.
         :param str s3_bucket: The S3 bucket name.
         :param bool use_hash: Whether to prefix the key with a deterministic hash.
+        :param bool use_geo: Build coordinate information if available.
         :return: The nd array.
         """
         # TODO(csiro):
@@ -370,7 +411,7 @@ class S3LIO(object):
         #     - multiprocess the for loop depending on slice size.
         #     - not very efficient, redo
         #     - point retrieval via integer index instead of slicing operator.
-        #
+        #     - use_geo is a stop gap until ndindex is implemented.
         # element_ids = [np.ravel_multi_index(tuple([s.start for s in s]), macro_shape) for s in slices]
 
         keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
@@ -384,10 +425,19 @@ class S3LIO(object):
         for s3_key, data_slice, local_slice, shape, offset in zipped:
             data[data_slice] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key)
 
+        if use_geo:
+            xarray_descriptor = self.s3aio.s3io.get_bytes(s3_bucket, base_location + "_geo")
+            if xarray_descriptor:
+                cctx = zstd.ZstdDecompressor()
+                xarray_descriptor = cctx.decompress(xarray_descriptor)
+                xarray_descriptor = loads(xarray_descriptor)
+                xarray_descriptor = self._slice_metadata(xarray_descriptor, array_slice)
+                xarray_descriptor['data'] = data.tolist()
+                return DataArray.from_dict(xarray_descriptor)
         return data
 
     def get_data_unlabeled_mp(self, base_location, macro_shape, micro_shape, dtype, array_slice, s3_bucket,
-                              use_hash=False):
+                              use_hash=False, use_geo=False):
         """Gets integer indexed data from S3 in parallel.
 
         :param str base_location: The base location of the requested data.
@@ -397,6 +447,7 @@ class S3LIO(object):
         :param tuple array_slice: The requested nD array slice.
         :param str s3_bucket: The S3 bucket name.
         :param bool use_hash: Whether to prefix the key with a deterministic hash.
+        :param bool use_geo: Build coordinate information if available.
         :return: The nd array.
         """
 
@@ -405,7 +456,7 @@ class S3LIO(object):
         #     - multiprocess the for loop depending on slice size.
         #     - not very efficient, redo
         #     - point retrieval via integer index instead of slicing operator.
-        #
+        #     - use_geo is a stop gap until ndindex is implemented.
         # element_ids = [np.ravel_multi_index(tuple([s.start for s in s]), macro_shape) for s in slices]
         def work_data_unlabeled(array_name, s3_key, data_slice, local_slice, shape, offset):
             result = sa.attach(array_name)
@@ -425,4 +476,51 @@ class S3LIO(object):
 
         sa.delete(array_name)
 
+        if use_geo:
+            xarray_descriptor = self.s3aio.s3io.get_bytes(s3_bucket, base_location + "_geo")
+            if xarray_descriptor:
+                cctx = zstd.ZstdDecompressor()
+                xarray_descriptor = cctx.decompress(xarray_descriptor)
+                xarray_descriptor = loads(xarray_descriptor)
+                xarray_descriptor = self._slice_metadata(xarray_descriptor, array_slice)
+                xarray_descriptor['data'] = data.tolist()
+                return DataArray.from_dict(xarray_descriptor)
         return data
+
+    def set_data_unlabeled(self, base_location, macro_shape, micro_shape, dtype, array_slice, s3_bucket,
+                           data, use_hash=False):
+        """Sets integer indexed data to S3.
+
+        :param str base_location: The base location of the requested data.
+        :param tuple macro_shape: The macro shape of the data.
+        :param tuple micro_shape: The micro shape of the data.
+        :param numpy.dtype dtype: The data type of the data.
+        :param tuple array_slice: The requested nD array slice.
+        :param str s3_bucket: The S3 bucket name.
+        :param ndarray data: The data to upload to S3.
+        :param bool use_hash: Whether to prefix the key with a deterministic hash.
+        """
+
+        pass
+
+    def set_data_unlabeled_mp(self, base_location, macro_shape, micro_shape, dtype, array_slice, s3_bucket,
+                              data, use_hash=False):
+        """Sets integer indexed data to S3 with parallel.
+
+        :param str base_location: The base location of the requested data.
+        :param tuple macro_shape: The macro shape of the data.
+        :param tuple micro_shape: The micro shape of the data.
+        :param numpy.dtype dtype: The data type of the data.
+        :param tuple array_slice: The requested nD array slice.
+        :param str s3_bucket: The S3 bucket name.
+        :param ndarray data: The data to upload to S3.
+        :param bool use_hash: Whether to prefix the key with a deterministic hash.
+        """
+
+        pass
+
+    def _slice_metadata(self, descriptor, array_slice):
+        d = deepcopy(descriptor)
+        for dim, s in zip(d['dims'], array_slice):
+            d['coords'][dim]['data'] = d['coords'][dim]['data'][s]
+        return d
