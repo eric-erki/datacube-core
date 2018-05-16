@@ -5,11 +5,32 @@
 What's New
 **********
 
+v1.6rc2 (Maybe v1.6 proper) (?? May 2018)
+=========================================
+
+Backwards Incompatible Changes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- The `helpers.write_geotiff()` function has been updated to support files smaller
+  than 256x256. It also no longer supports specifying the time index. Before passing
+  data in, use `xarray_data.isel(time=<my_time_index>)`. (#277)
+
+Changes
+~~~~~~~
+
+- The masking related function ``describe_variable_flags()`` now returns a
+  pandas DataFrame by default. This will display as a table in Jupyter
+  Notebooks. (:pull:`422`)
+
+
 Bug Fixes
 ~~~~~~~~~
 
 - `.dimensions` property of a product no longer crashes when product is missing
   a `grid_spec`, instead defaults to `time,y,x`
+
+- Fix a regression in v1.6rc1 whereby it was impossible to run ``datacube ingest``
+  to create products which were defined in 1.5.5 and earlier versions of ODC. (:issue:`432`, :pull:`436`)
 
 
 
