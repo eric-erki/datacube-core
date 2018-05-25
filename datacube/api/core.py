@@ -459,8 +459,9 @@ class Datacube(object):
         """
         metadata = self.metadata_for_load(product, measurements, output_crs, resolution, resampling,
                                           stack, like, align, datasets, **query)
-        result = self.load_data(metadata['grouped'], metadata['geobox'], metadata['measurements_values'].values(),
-                                fuse_func=fuse_func, dask_chunks=dask_chunks, use_threads=use_threads)
+        result = self.load_data(metadata['grouped'], metadata['geobox'],
+                                list(metadata['measurements_values'].values()), fuse_func=fuse_func,
+                                dask_chunks=dask_chunks, use_threads=use_threads)
 
         if not stack:
             return result
