@@ -4,6 +4,7 @@ import imp
 import shutil
 from pathlib import Path
 
+import uuid
 import numpy
 import pytest
 import rasterio
@@ -137,7 +138,10 @@ def check_datacube_save(index, tmpdir, datacube_env_name):
     ds = DatacubeSave(dc)
 
     if datacube_env_name == 's3aio_env':
-        ds.save(data_array, str(tmpdir), 's3aio_test', 'dcsave_s3test', 'eo', chunking={'time': 1, 'x': 3, 'y': 3})
+        folder = uuid.uuid4().hex[:10].upper()
+        tmpdir.mkdir(folder)
+        ds.save(data_array, str(tmpdir) + '/' + folder, 's3aio_test', 'dcsave_s3test', 'eo',
+                chunking={'time': 1, 'x': 3, 'y': 3})
         data2 = {
             'product': 'dcsave_s3test',
             'measurements': ['blue', 'red'],
@@ -151,7 +155,10 @@ def check_datacube_save(index, tmpdir, datacube_env_name):
         assert (data_array.blue == data_array2.blue).all()
         assert (data_array.red == data_array2.red).all()
 
-    ds.save(data_array, str(tmpdir), 'NetCDF CF', 'dcsave_netcdf', 'eo', chunking={'time': 1, 'x': 3, 'y': 3})
+    folder = uuid.uuid4().hex[:10].upper()
+    tmpdir.mkdir(folder)
+    ds.save(data_array, str(tmpdir) + '/' + folder, 'NetCDF CF', 'dcsave_netcdf', 'eo',
+            chunking={'time': 1, 'x': 3, 'y': 3})
     data3 = {
         'product': 'dcsave_netcdf',
         'measurements': ['blue', 'red'],
