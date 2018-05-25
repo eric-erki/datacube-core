@@ -93,6 +93,7 @@ def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_han
 
     check_open_with_dc(index)
     check_open_with_grid_workflow(index)
+    check_datacube_save(index, testdata_dir, datacube_env_name)
 
     # AE/EE
     check_submit_job(store_handler, local_config, index)
@@ -115,6 +116,54 @@ def test_s3_user_tasks(clirunner, index, testdata_dir, ingest_configs, store_han
     """
     check_submit_job_user_tasks(store_handler, local_config, index)
     check_submit_invalid_data_and_user_tasks(local_config)
+
+
+def check_datacube_save(index, tmpdir, datacube_env_name):
+    from datacube.api.core import Datacube
+    from datacube.api.datacube_save import DatacubeSave
+
+    dc = Datacube(index=index)
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149, 150),
+        'y': (-35, -36)
+    }
+    metadata = dc.metadata_for_load(**data)
+    chunk = (slice(0, 1, None), slice(0, 4, None), slice(0, 4, None))
+    data_array = dc.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
+                              metadata['measurements_values'].values())
+
+    ds = DatacubeSave(dc)
+
+    if datacube_env_name == 's3aio_env':
+        ds.save(data_array, str(tmpdir), 's3aio_test', 'dcsave_s3test', 'eo', chunking={'time': 1, 'x': 3, 'y': 3})
+        data2 = {
+            'product': 'dcsave_s3test',
+            'measurements': ['blue', 'red'],
+        }
+
+        metadata2 = dc.metadata_for_load(**data2)
+        chunk2 = (slice(0, 2, None), slice(0, 4, None), slice(0, 4, None))
+        data_array2 = dc.load_data(metadata2['grouped'][chunk2[0]], metadata2['geobox'][chunk2[1:]],
+                                   metadata2['measurements_values'].values())
+
+        assert (data_array.blue == data_array2.blue).all()
+        assert (data_array.red == data_array2.red).all()
+
+    ds.save(data_array, str(tmpdir), 'NetCDF CF', 'dcsave_netcdf', 'eo', chunking={'time': 1, 'x': 3, 'y': 3})
+    data3 = {
+        'product': 'dcsave_netcdf',
+        'measurements': ['blue', 'red'],
+    }
+
+    metadata3 = dc.metadata_for_load(**data3)
+    chunk3 = (slice(0, 2, None), slice(0, 4, None), slice(0, 4, None))
+    data_array3 = dc.load_data(metadata3['grouped'][chunk3[0]], metadata3['geobox'][chunk3[1:]],
+                               metadata3['measurements_values'].values())
+
+    assert (data_array.blue == data_array3.blue).all()
+    assert (data_array.red == data_array3.red).all()
 
 
 def check_open_with_dc(index):
