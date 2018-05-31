@@ -97,7 +97,7 @@ def test_celery_with_worker():
 
     def launch_worker():
         args = ['bash', '-c',
-                'nohup python -m datacube.execution.worker --executor celery localhost:{} --nprocs 1 &'.format(PORT)]
+                'nohup python3 -m datacube.execution.worker --executor celery localhost:{} --nprocs 1 &'.format(PORT)]
         try:
             subprocess.check_call(args)
         except subprocess.CalledProcessError:

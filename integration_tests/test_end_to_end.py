@@ -11,9 +11,9 @@ import rasterio
 
 from datacube.compat import string_types
 from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
-        check_submit_job, check_do_the_math, check_submit_job_params, \
+        check_submit_job, check_do_the_math, check_submit_user_data, \
         check_submit_job_user_tasks, check_submit_invalid_data_and_user_tasks, \
-        store_handler, ee_celery
+        store_handler, input_data, ee_celery
 from integration_tests.utils import assert_click_command
 from integration_tests.conftest import prepare_test_ingestion_configuration
 
@@ -60,8 +60,8 @@ ignore_me = pytest.mark.xfail(True, reason="get_data/get_description still to be
 
 @pytest.mark.usefixtures('default_metadata_type')
 @pytest.mark.parametrize('datacube_env_name', ('datacube', 's3aio_env', ), indirect=True)
-def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_handler,
-                       local_config, ee_celery, datacube_env_name):
+def test_s3_end_to_end(tmpdir, clirunner, index, testdata_dir, ingest_configs, store_handler,
+                       local_config, ee_celery, datacube_env_name, input_data):
     """
     Loads two dataset configurations, then ingests a sample Landsat 5 scene
 
@@ -97,15 +97,18 @@ def test_s3_end_to_end(clirunner, index, testdata_dir, ingest_configs, store_han
     check_datacube_save(index, testdata_dir, datacube_env_name)
 
     # AE/EE
-    check_submit_job(store_handler, local_config, index)
-    check_do_the_math(store_handler, local_config, index)
-    check_submit_job_params(store_handler, local_config, index)
+    # Test single chunk
+    check_submit_job(tmpdir, store_handler, local_config, index, input_data, (1, 231, 420))
+    # Test multiple chunks (default chunk is defined in `input_data`)
+    check_submit_job(tmpdir, store_handler, local_config, index, input_data)
+    check_do_the_math(tmpdir, store_handler, local_config, index, input_data)
+    check_submit_user_data(tmpdir, store_handler, local_config, input_data)
 
 
 @pytest.mark.usefixtures('default_metadata_type')
 @pytest.mark.parametrize('datacube_env_name', ('datacube', 's3aio_env', ), indirect=True)
-def test_s3_user_tasks(clirunner, index, testdata_dir, ingest_configs, store_handler,
-                       local_config, ee_celery, datacube_env_name):
+def test_s3_user_tasks(tmpdir, clirunner, index, testdata_dir, ingest_configs, store_handler,
+                       local_config, ee_celery, datacube_env_name, input_data):
     """
     Loads two dataset configurations, then ingests a sample Landsat 5 scene
 
@@ -115,8 +118,8 @@ def test_s3_user_tasks(clirunner, index, testdata_dir, ingest_configs, store_han
     The input dataset should be recorded in the index, and two sets of storage units
     should be created on disk and recorded in the index.
     """
-    check_submit_job_user_tasks(store_handler, local_config, index)
-    check_submit_invalid_data_and_user_tasks(local_config)
+    check_submit_job_user_tasks(tmpdir, store_handler, local_config)
+    check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data)
 
 
 def check_datacube_save(index, tmpdir, datacube_env_name):

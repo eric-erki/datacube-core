@@ -8,6 +8,7 @@ from __future__ import absolute_import
 
 import logging
 from time import sleep
+from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse
 from shutil import rmtree
@@ -15,6 +16,8 @@ from pprint import pformat
 import pytest
 from celery import Celery
 import numpy as np
+import boto3
+from boto3.s3.transfer import TransferConfig
 
 from datacube.engine_common.store_handler import StoreHandler, JobStatuses
 from datacube.analytics.analytics_worker import launch_ae_worker, stop_worker
@@ -40,25 +43,28 @@ def store_handler(redis_config):
     store_handler._store.flushdb()
 
 
-@pytest.fixture(scope='module')
-def user_data():
-    users = {}
-    for user_no in range(2):
-        jobs = []
-        for job_no in range(6):
-            def function(user_no=user_no, job_no=job_no):
-                return 'User {:03d}, job {:03d}'.format(user_no, job_no)
-            jobs.append({
-                'job_type': FUNCTION_TYPES[job_no % 3],
-                'function': function,
-                'data': 'Data for {:03d}-{:03d}'.format(user_no, job_no),
-                'results': [{
-                    'result_type': RESULT_TYPES[result_no % 3],
-                    'descriptor': 'Descriptor for {:03d}-{:03d}-{:03d}'.format(user_no, job_no, result_no)
-                } for result_no in range(3)]
-                })
-        users['user{:03d}'.format(user_no)] = jobs
-    return users
+@pytest.fixture
+def input_data():
+    '''Fixed test data. The shape is (1, 231, 420).'''
+    return {
+        'query': {
+            'query_1': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            },
+            'query_2': {
+                'product': 'ls5_nbar_albers',
+                'measurements': ['blue', 'red'],
+                'x': (149.07, 149.18),
+                'y': (-35.32, -35.28)
+            }
+        },
+        'storage_params': {
+            'chunk': (1, 200, 200)
+        }
+    }
 
 
 @pytest.fixture(scope='session')
@@ -69,212 +75,166 @@ def ee_celery(ee_config):
     process.terminate()
 
 
-def _test_submit_invalid_job(store_handler, redis_config, local_config, index, ee_celery):
-    '''
-    Test for failure of job submission when passing insufficient data or wrong type
-    '''
-    store_handler._store.flushdb()
-    client = AnalyticsClient(local_config)
+def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_callback, **params):
+    '''Submits a user function and runs a callback test function.
 
-    # submit bad data that is not a dictionary
-    with pytest.raises(TypeError):
-        analysis_p = client.submit_python_function(lambda x: x, [1, 2, 3, 4])
-
-    # Submit bad data that is a dict but does not have any measurements
-    with pytest.raises(LookupError):
-        analysis_p = client.submit_python_function(lambda x: x, {'a': 1, 'b': 2})
-
-    store_handler._store.flushdb()
-
-
-def check_submit_job_params(store_handler, local_config, index):
-    logger = logging.getLogger(__name__)
-    logger.debug('Started.')
-
-    store_handler._store.flushdb()
-
-    filename = 'my_result.txt'
-
-    def base_function(data, function_params=None, user_data=None):
-        # Example of import in the function
-        from pathlib import Path
-        filepath = Path(function_params['output_dir']) / function_params['filename']
-        # Example of user-data (auxillary file)
-        with filepath.open('w') as f:
-            f.write('This is an auxillary output file with some text')
-        return data['query_1']
-
-    function_params = {
-        'filename': filename,
-        'some_value': 2
-    }
-    data = {
-        'query': {
-            'query_1': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            },
-            'query_2': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            }
-        },
-        'storage_params': {
-            'chunk': (1, 120, 420)
-        }
-    }
-
-    client = AnalyticsClient(local_config)
-    client.update_config(local_config)
-    # Use a chunk with x=120 so that 2 sub-jobs get created
-    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, function_params=function_params,
-                                                 data=data)
-
-    # Wait a while for the main job to complete
-    for tstep in range(30):
-        if jro.job.status == JobStatuses.COMPLETED:
-            break
-        sleep(0.5)
-    assert jro.job.status == JobStatuses.COMPLETED
-    jro.update()
-
-    logger.debug('JRO\n{}'.format(jro))
-    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
-
-    use_s3 = local_config.execution_engine_config['use_s3']
-    user_data = jro.user_data
-    for datum in user_data:
-        assert filename in datum
-        if use_s3:
-            assert 'bucket' in datum[filename]
-            assert 'key' in datum[filename]
-            assert datum[filename]['key'][-len(filename):] == filename
-        else:
-            filepath = urlparse(datum[filename]).path
-            with Path(filepath).open() as fh:
-                assert fh.read() == 'This is an auxillary output file with some text'
-        # Onus is on end user to clean output files copied locally
-        if 'base_dir' in datum:
-            rmtree(datum['base_dir'])
-
-    # Leave time for workers to complete their tasks then flush the store
-    sleep(1)
-    store_handler._store.flushdb()
-
-
-def check_submit_job(store_handler, local_config, index):
-    '''Test the following:
-        - the submission of a job with real data
-        - decomposition
-        - execute function
-        - save data
-        - construct JRO
-        - check JRO.
-
-    This is a stub.
-
-    This test function needs further work to test the JRO and corresponding store values.
+    This cleans the store before and after.
     '''
     logger = logging.getLogger(__name__)
-    logger.debug('Started.')
+    logger.debug('{sep} Starting {} {sep}'.format(test_name, sep='='*20))
 
-    store_handler._store.flushdb()
-
-    def base_function(data, function_params=None, user_data=None):
-        return data['query_1']
-    data = {
-        'query': {
-            'query_1': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            },
-            'query_2': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            }
-        },
-        'storage_params': {
-            'chunk': (1, 231, 420)
-        }
-    }
     client = AnalyticsClient(local_config)
-    client.update_config(local_config)
-    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, data=data)
+    client.workers_status()
+    jro = client.submit_python_function(base_function, paths=local_config.files_loaded,
+                                        env=local_config._env, output_dir=str(tmpdir), **params)
 
     # Wait a while for the main job to complete
-    for tstep in range(30):
-        if jro.job.status == JobStatuses.COMPLETED:
+    for tstep in range(55):
+        if jro.status == JobStatuses.COMPLETED:
             break
         sleep(0.5)
-    assert jro.job.status == JobStatuses.COMPLETED
-    jro.update()
+    assert jro.status == JobStatuses.COMPLETED, client._store.str_dump()
 
-    logger.debug('JRO\n{}'.format(jro))
-    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
-
-    # Ensure an id is set for the job and one of its datasets
-    assert isinstance(jro.job.id, int)
-    result_id = jro.results.datasets['blue'].to_dict()['id']
-    assert isinstance(result_id, int)
-
-    # Check the dataset base name
-    assert jro.results.datasets['blue'].to_dict()['base_name'] == 'result_{:07d}'.format(result_id)
-
-    # chunk and shape
-    for k, ds in jro.results.datasets.items():
-        assert ds.to_dict()['chunk'] == (1, 231, 420)
-        # TODO: implement JRO updates through new calls to the client --> engine
-
-    # Base job should be complete unless something went wrong with worker threads.
-    # submit_python_function currently waits until jobs complete then sets base job status
+    # Base job should have completed
     assert jro.job.status == JobStatuses.COMPLETED
 
-    # Retrieve result and check shape
-    returned_calc = jro.results.red[:]
-    assert(returned_calc.shape == (1, 231, 420))
+    # logger.debug('JRO\n{}'.format(jro))
+    # logger.debug('Store dump\n{}'.format(client._store.str_dump()))
 
-    # Retrieve data directly and check that results are same as data
-    dc = Datacube(index=index)
-    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-    np.testing.assert_array_equal(returned_calc.values, data_array.red.values)
-
-    # check data stored correctly
-    final_job = client._store.get_job(jro.job.id)
-    assert client._store.get_data(final_job.data_id) == data['query']
-
-    # there should be at least one job dependency
-    job_dep = client._store.get_job_dependencies(jro.job.id)
-    assert len(job_dep[0]) > 0
+    test_callback(jro, logger)
 
     for datum in jro.user_data:
         # Onus is on end user to clean output files copied locally
         if 'base_dir' in datum:
             rmtree(datum['base_dir'])
-
-    # Leave time for workers to complete their tasks then flush the store
-    sleep(1)
-    store_handler._store.flushdb()
+    logger.debug('{sep} Completed {} {sep}'.format(test_name, sep='='*20))
 
 
-def check_do_the_math(store_handler, local_config, index):
-    """
-    Submit a function that does something
-    """
-    logger = logging.getLogger(__name__)
-    logger.debug('Started.')
+def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
+    '''Check retrieval of user data created by user function as files.'''
+    filename = 'my_result.txt'
+    text = 'This is an auxillary output file with some text'
 
-    store_handler._store.flushdb()
+    def base_function(data, function_params=None, user_data=None):
+        # Example of import in the user function
+        from pathlib import Path
+        filepath = Path(function_params['output_dir']) / function_params['filename']
+        # Example of user-data (auxillary file)
+        with filepath.open('w') as f:
+            f.write(text)
+        output = {}
+        for query, input_data in data.items():
+            output_data = input_data
+            output[query] = {
+                'chunk': output_data.blue.shape,  # will be incorrect for bottom/right cells
+                'data': output_data
+            }
+        return output
 
+    function_params = {
+        'filename': filename,
+        'some_value': 2
+    }
+
+    def test_callback(jro, logger):
+        '''Check user data retrieval.'''
+        use_s3 = local_config.execution_engine_config['use_s3']
+        if use_s3:
+            s3 = boto3.client('s3')
+            transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
+                                             multipart_threshold=8*1024*1024,
+                                             max_concurrency=10)
+            to_delete = {}
+        user_data = jro.user_data
+        for datum in user_data:
+            assert filename in datum
+            if use_s3:
+                # Download the files from s3 and into the temp directory
+                parsed = urlparse(datum[filename])
+                bucket = parsed.netloc
+                key = parsed.path.lstrip('/')
+                filepath = Path(tmpdir) / key
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+                s3.download_file(bucket, key, str(filepath), Config=transfer_config)
+                if bucket not in to_delete:
+                    to_delete[bucket] = []
+                to_delete[bucket].append({'Key': key})
+            else:
+                # If not using s3, the files would have been de-archived in the temp directory
+                filepath = urlparse(datum[filename]).path
+            with Path(filepath).open() as fh:
+                assert fh.read() == text
+        if use_s3:
+            # Clean up after ourselves, as a single call for performance
+            for bucket, objects in to_delete.items():
+                s3.delete_objects(Bucket=bucket, Delete={'Objects': objects, 'Quiet': True})
+
+    _submit('check_submit_user_data', tmpdir, store_handler, local_config, base_function, test_callback,
+            function_params=function_params, data=input_data)
+
+
+def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chunk=None):
+    '''Test basic aspects of job submission.
+
+    It checks the store data and also retrieves and checks the data through the JRO. The default
+    chunk size can be modified to test border cases, e.g. single chunk.
+    '''
+    if chunk:
+        data = deepcopy(input_data)
+        data['storage_params']['chunk'] = chunk
+    else:
+        data = input_data
+
+    def base_function(data, function_params=None, user_data=None):
+        output = {}
+        for query, input_data in data.items():
+            output_data = input_data
+            output[query] = {
+                'chunk': output_data.blue.shape,  # will be incorrect for bottom/right cells
+                'data': output_data
+            }
+        return output
+
+    def test_callback(jro, logger):
+        '''Perform store-related and data-related checks.'''
+        # == Store related checks ==
+        # Ensure an id is set for the job and one of its results
+        assert isinstance(jro.job.id, int)
+        result_id = jro.results.query_1_red.id
+        assert isinstance(result_id, int)
+
+        # Check data stored correctly: normally, never use the client's store directly
+        job_meta = jro.client._store.get_job(jro.job.id)
+        assert jro.client._store.get_data(job_meta.data_id) == input_data['query']
+
+        # There should be at least one job dependency
+        job_dep = jro.client._store.get_job_dependencies(jro.job.id)
+        assert len(job_dep[0]) > 0
+
+        # Check the result's base name
+        assert jro.results.query_1_red.to_dict()['base_name'] == 'job_{}_query_1_red'.format(jro.job.id)
+
+        # == Data related checks ==
+        # Check all chunk and shape
+        for k, ds in jro.results.datasets.items():
+            assert ds.to_dict()['chunk'] == data['storage_params']['chunk']
+
+        # Retrieve result and check shape
+        returned_calc = jro.results.query_1_red[:]
+        assert(returned_calc.shape == (1, 231, 420))
+
+        # Retrieve data directly and check that results are same as data
+        dc = Datacube(index=index)
+        data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+        np.testing.assert_array_equal(returned_calc.values, data_array.red.values)
+
+    _submit('check_submit_job with chunk={}'.format(chunk),
+            tmpdir, store_handler, local_config, base_function, test_callback,
+            data=data)
+
+
+def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
+    '''Test basic band maths.'''
     # TODO: This kind of function not yet supported:
     # import xarray as xr
     # def general_calculation(data):
@@ -283,81 +243,31 @@ def check_do_the_math(store_handler, local_config, index):
 
     # Simple transform
     def band_transform(data, function_params=None, user_data=None):
-        return data['query_1'] + 1000
-
-    data = {
-        'query': {
-            'query_1': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            },
-            'query_2': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
+        output = {}
+        for query, input_data in data.items():
+            output_data = input_data + 1000
+            output[query] = {
+                'chunk': output_data.blue.shape,  # will be incorrect for bottom/right cells
+                'data': output_data
             }
-        },
-        'storage_params': {
-            'chunk': (1, 231, 420)
-        }
-    }
+        return output
 
-    client = AnalyticsClient(local_config)
-    client.update_config(local_config)
-    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(band_transform, data=data)
+    def test_callback(jro, logger):
+        '''Retrieve data directly and check that bands are transformed.'''
+        returned_calc = jro.results.query_1_red[:]
+        dc = Datacube(index=index)
+        data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
+        np.testing.assert_array_equal(returned_calc.values, data_array.red.values + 1000)
 
-    # Wait a while for the main job to complete
-    for tstep in range(30):
-        if jro.job.status == JobStatuses.COMPLETED:
-            break
-        sleep(0.5)
-    assert jro.job.status == JobStatuses.COMPLETED
-
-    print('Before JRO update', jro.results.red['shape'])
-    jro.update()
-    print('After JRO update', jro.results.red[:].shape)
-
-    returned_calc = jro.results.red[:]
-
-    # Retrieve data directly and check that bands are transformed
-    dc = Datacube(index=index)
-    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
-    np.testing.assert_array_equal(returned_calc.values, data_array.red.values + 1000)
-
-    # Leave time for workers to complete their tasks then flush the store
-    sleep(1)
-    print('Store dump\n{}'.format(client._store.str_dump()))
-    store_handler._store.flushdb()
+    _submit('check_do_the_math',
+            tmpdir, store_handler, local_config, band_transform, test_callback,
+            data=input_data)
 
 
-def check_submit_invalid_data_and_user_tasks(local_config):
+def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data):
     '''Test for failure if both data and user_tasks are specified for a job.'''
-
     def base_function(data, function_params=None, user_data=None):
         return data['query_1']
-    data = {
-        'query': {
-            'query_1': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            },
-            'query_2': {
-                'product': 'ls5_nbar_albers',
-                'measurements': ['blue', 'red'],
-                'x': (149.07, 149.18),
-                'y': (-35.32, -35.28)
-            }
-        },
-        'storage_params': {
-            'chunk': (1, 231, 420)
-        }
-    }
     function_params = {
         'shp': (Path(__file__).parent / 'data' / 'polygons.shp').as_uri(),
         'shx': (Path(__file__).parent / 'data' / 'polygons.shx').as_uri(),
@@ -365,31 +275,19 @@ def check_submit_invalid_data_and_user_tasks(local_config):
     }
     user_tasks = [{'filename': 'polygons.shp',
                    'feature': n} for n in range(4)]
-    client = AnalyticsClient(local_config)
-    client.update_config(local_config)
-    # Submit invalid action type
+
+    def test_callback(jro, logger):
+        logger.debug(jro)
+
+    # Cannot specify data and user_task at the same time
     with pytest.raises(ValueError):
-        client.submit_python_function(base_function, data=data, user_tasks=user_tasks)
+        _submit('check_submit_invalid_data_and_user_tasks',
+                tmpdir, store_handler, local_config, base_function, test_callback,
+                data=input_data, user_tasks=user_tasks)
 
 
-def check_submit_job_user_tasks(store_handler, local_config, index):
-    '''Test the following:
-        - the submission of a job with user tasks (instead of automatic data decomposition)
-        - decomposition using user tasks
-        - execute function
-        - save data
-        - construct JRO
-        - check JRO.
-
-    This is a stub.
-
-    This test function needs further work to test the JRO and corresponding store values.
-    '''
-    logger = logging.getLogger(__name__)
-    logger.debug('Started.')
-
-    store_handler._store.flushdb()
-
+def check_submit_job_user_tasks(tmpdir, store_handler, local_config):
+    '''Test submission of function witu user_tasks instead of data.'''
     def base_function(data, function_params=None, user_task=None):
         from pathlib import Path
         from osgeo.gdal import OpenEx
@@ -419,62 +317,43 @@ def check_submit_job_user_tasks(store_handler, local_config, index):
     user_tasks = [{'filename': 'polygons.shp',
                    'feature': n} for n in range(4)]
 
-    expected_extents = [
-        (146.99176708700008, 147.00366523700006, -35.306823330999975, -35.287790282999936),
-        (146.43423890000008, 146.47296589200005, -35.249874674999944, -35.19856893299993),
-        (146.14353063500005, 146.22597876600003, -35.344454834999965, -35.23281874899993),
-        (146.33783807400005, 146.35879447800005, -35.41324290999995, -35.393512105999946)
-    ]
+    def test_callback(jro, logger):
+        '''Check we obtain the expected file contents and extents.'''
+        expected_extents = [
+            (146.99176708700008, 147.00366523700006, -35.306823330999975, -35.287790282999936),
+            (146.43423890000008, 146.47296589200005, -35.249874674999944, -35.19856893299993),
+            (146.14353063500005, 146.22597876600003, -35.344454834999965, -35.23281874899993),
+            (146.33783807400005, 146.35879447800005, -35.41324290999995, -35.393512105999946)
+        ]
+        extents = {}
+        use_s3 = local_config.execution_engine_config['use_s3']
+        user_data = jro.user_data
+        logger.debug('JRO User data:\n{}'.format(pformat(user_data)))
+        for datum in user_data:
+            feature_no = None
+            for key, value in datum.items():
+                if key[8:15] == 'feature':
+                    feature_no = int(key[15:17])
+                    filepath = urlparse(value).path
+                    if not use_s3:
+                        with Path(filepath).open() as fh:
+                            assert fh.read() == 'Test: {}\n'.format(feature_no)
+                    if 'output' in datum:
+                        extents[feature_no] = datum['output']
+                        break
+        for feature_no, expected_extent in enumerate(expected_extents):
+            assert feature_no in extents
+            assert extents[feature_no] == expected_extent
 
-    client = AnalyticsClient(local_config)
-    client.update_config(local_config)
-    # TODO: eventually only the jro should be returned. For now we use the results directly for debug
-    jro, results = client.submit_python_function(base_function, function_params=function_params,
-                                                 user_tasks=user_tasks)
-
-    # Wait a while for the main job to complete
-    for tstep in range(30):
-        if jro.job.status == JobStatuses.COMPLETED:
-            break
-        sleep(0.5)
-    assert jro.job.status == JobStatuses.COMPLETED
-    jro.update()
-
-    logger.debug('JRO\n{}'.format(jro.results))
-    logger.debug('Store dump\n{}'.format(client._store.str_dump()))
-
-    # Check we obtain the expected file contents and extents
-    extents = {}
-    use_s3 = local_config.execution_engine_config['use_s3']
-    user_data = jro.user_data
-    print('JRO User data:\n{}'.format(pformat(user_data)))
-    for datum in user_data:
-        feature_no = None
-        for key, value in datum.items():
-            if key[8:15] == 'feature':
-                feature_no = int(key[15:17])
-                filepath = urlparse(value).path
-                if not use_s3:
-                    with Path(filepath).open() as fh:
-                        assert fh.read() == 'Test: {}\n'.format(feature_no)
-                # Onus is on end user to clean output files copied locally
-                if 'base_dir' in datum:
-                    rmtree(datum['base_dir'])
-                if 'output' in datum:
-                    extents[feature_no] = datum['output']
-                    break
-    for feature_no, expected_extent in enumerate(expected_extents):
-        assert feature_no in extents
-        assert extents[feature_no] == expected_extent
-
-    # Leave time for workers to complete their tasks then flush the store
-    sleep(1)
-    store_handler._store.flushdb()
+    _submit('check_submit_job_user_tasks',
+            tmpdir, store_handler, local_config, base_function, test_callback,
+            function_params=function_params, user_tasks=user_tasks)
 
 
-def test_submit_invalid_update(ee_config):
+def test_submit_invalid_update(local_config):
     '''Test for failure of jro updates when passing insufficient data or wrong type.'''
-    updater = UpdateEngineV2(ee_config)
+    updater = UpdateEngineV2(paths=local_config.files_loaded,
+                             env=local_config._env)
     # Submit invalid action type
     with pytest.raises(ValueError):
         updater.execute(1, 3)

@@ -62,13 +62,17 @@ class JobResult(object):
     jro.results.masking.red_mask[:, 0:100, 0:100]
     """
 
-    def __init__(self, job_info, result_info, client=None):
+    def __init__(self, job_info, result_info, client=None, paths=None, env=None):
         """Initialise the Job/Result object.
         """
+        self._status = JobStatuses.RUNNING
         self._client = client
+        self._paths = paths
+        self._env = env
         self._job = Job(self, job_info)
         self._results = Results(self, result_info)
         self._user_data = UserData(self, job_info)
+        self._timer = None
 
     @property
     def client(self):
@@ -103,17 +107,19 @@ class JobResult(object):
     def user_data(self):
         return self._user_data.user_data
 
-    def update(self):
-        self.client.update_jro(self)
+    @property
+    def status(self):
+        return self._status
 
     def checkForUpdate(self, period):
         """Starts a periodic timer to check and update the JRO
         """
         if self.job.status == JobStatuses.COMPLETED:
-            self.update()
+            self.client.update_jro(self, self._paths, self._env)
+            self._status = JobStatuses.COMPLETED
             print("Job is Completed")
         else:
-            threading.Timer(period, self.checkForUpdate, [period]).start()
+            self._timer = threading.Timer(period, self.checkForUpdate, [period]).start()
 
 
 class Job(object):
@@ -160,7 +166,7 @@ class Job(object):
         """
         status = None
         if self._jro.client:
-            status = self._jro.client.get_status(self)
+            status = self._jro.client.get_status(self, self._jro._paths, self._jro._env)
         return status
 
     def cancel(self):
@@ -219,17 +225,72 @@ class LazyArray(object):
         self._id = self._array_info['id']
         self._type = self._array_info['type']
         self._load_type = self._array_info['load_type']
+        self._output_dir = self._array_info['output_dir']
         self._cache = {}
         self._xarray_descriptor = None
 
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
+            # Initially, the shape, dtype and chunk size are not known as they are defined as
+            # results get processed.
+            self._shape_components = None
+            self._shape = None
+            self._chunk = None
+            self._dtype = None
             self._base_name = self._array_info['base_name']
             self._bucket = self._array_info['bucket']
-            self._shape = self._array_info['shape']
-            self._chunk = self._array_info['chunk']
-            self._dtype = self._array_info['dtype']
+            self.update(array_info)
         elif self._type == ResultTypes.INDEXED:
             self._query = self._array_info['query']
+
+    def _update_shape(self, array_info):
+        """Progressively build the shape of the full array.
+
+        Each time a sub-array is returned, its shape and position in the full array are used to
+        compute the shape of the full array. Looking at the problem in 2d:
+        ```
+        [[b b ... b | e]
+         [b b ... b | e]
+         [   ...    | .]
+         [b b ... b | e]
+         [e e ... e | e]
+        ```
+
+        Where `b` denotes a cell in the main `body` of the full array, and `e` a cell on the
+        edge. All `b` cells have the same shape, i.e. that of the chunking used to store this
+        array. The `e` cells are smaller or equal to the chunk size.
+
+        We only need to know the shape of any `b` cell, as well as any cell in the last column and
+        any cell in the last row, as well the total number of cells to determine the full
+        shape. This means the LazyArray's shape can be determined before all results are returned.
+        """
+        if not self._shape:
+            sub_shape = array_info['shape']
+            position =  array_info['position']
+            total_cells = array_info['total_cells']
+            if self._shape_components is None:
+                # Each dimension's size is determined by 1 body and 1 edge lengths. We initially
+                # create an empty array of the same dimension as the total number of cells, but with
+                # 2 values for each. Once the array is full, the full shape is known.
+                self._shape_components = [[None, None] for i in range(len(sub_shape))]
+            for dim, length in enumerate(sub_shape):
+                # Work out dimensions one by one
+                if position[dim] < total_cells[dim]:
+                    # Body cell
+                    if self._shape_components[dim][0] is None:
+                        self._shape_components[dim][0] = length
+                else:
+                    # Edge cell
+                    if self._shape_components[dim][1] is None:
+                        self._shape_components[dim][1] = length
+                    if total_cells[dim] == 0:
+                        # Specific case of single cell along that dimension (chunk size >= full
+                        # array size along that dimension)
+                        self._shape_components[dim][0] = 0
+            # If all cells are full, calculate full array shape
+            if all([length is not None for component in self._shape_components
+                    for length in component]):
+                self._shape = tuple(comps[0] * cells + comps[1]
+                                    for comps, cells in zip(self._shape_components, total_cells))
 
     def update(self, array_info):
         """Update LazyArray with new information
@@ -237,9 +298,11 @@ class LazyArray(object):
             - update keys in array_info into local variables if required.
             - make it work for ResultTypes.INDEXED:
         """
-        self._shape = array_info['shape']
-        self._dtype = array_info['dtype']
-        self._chunk = array_info['chunk']
+        self._update_shape(array_info)
+        if not self._dtype:
+            self._dtype = array_info['dtype']
+        if not self._chunk:
+            self._chunk = array_info['chunk']
 
     def to_dict(self):
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
@@ -291,7 +354,7 @@ class LazyArray(object):
             for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
                 required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
                 idx = (name,) + np.unravel_index(chunk_id, [int(np.ceil(s/c)) for s, c in zip(shape, chunks)])
-                s3lio = S3LIO(True, use_s3, None)
+                s3lio = S3LIO(True, use_s3, self._output_dir)
                 dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
 
             return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
@@ -304,7 +367,7 @@ class LazyArray(object):
             use_s3 = True
             if self._type == ResultTypes.FILE:
                 use_s3 = False
-            s3lio = S3LIO(True, use_s3, None)
+            s3lio = S3LIO(True, use_s3, self._output_dir)
             keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
                 s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice, False)
 
@@ -405,10 +468,10 @@ class LazyArray(object):
         #     raise Exception("Undefied storage type")
 
     @staticmethod
-    def save(array, chunk_size, base_name, bucket, use_s3):
+    def save(array, chunk_size, base_name, bucket, use_s3, output_dir=None):
         """Saves an array to s3 and returns the array descriptor.
         """
-        s3lio = S3LIO(True, use_s3, None)
+        s3lio = S3LIO(True, use_s3, output_dir)
         s3lio.put_array_in_s3_mp(array, chunk_size, base_name, bucket, False, True)
         array_info = {}
         array_info['id'] = None
@@ -422,6 +485,9 @@ class LazyArray(object):
         array_info['shape'] = array.shape
         array_info['chunk'] = chunk_size
         array_info['dtype'] = array.dtype
+        array_info['output_dir'] = output_dir
+        array_info['position'] = (0, 0, 0)
+        array_info['total_cells'] = (0, 0, 0)
         return array_info
 
     @staticmethod
@@ -499,12 +565,11 @@ class Results(object):
     def status(self):
         status = None
         if self._jro.client and self.id:
-            status = self._jro.client.get_status(self)
+            status = self._jro.client.get_status(self, self._jro._paths, self._jro._env)
         return status
 
     def metadata(self):
         pass
-
 
     def delete(self):
         """deletes all results from storage:
@@ -520,6 +585,15 @@ class Results(object):
 
     def _add_array(self, name, array_info):
         self._datasets.update({name: LazyArray(array_info)})
+
+    def update_arrays(self, arrays):
+        for array_metadata in arrays.values():
+            array_info = array_metadata.descriptor
+            name = '_'.join((array_info['output_name'], array_info['band']))
+            if name in self._datasets:
+                self._datasets[name].update(array_info)
+            else:
+                self._datasets[name] = LazyArray(array_info)
 
     def __getattr__(self, key):
         if key in self._datasets:
@@ -565,7 +639,7 @@ class UserData(object):
         '''Fetch the user data from the server.'''
         if not self._user_data:
             if self._jro.job.status == JobStatuses.COMPLETED and self._jro.client:
-                self._user_data = self._jro.client.get_user_data(self.job_id)
+                self._user_data = self._jro.client.get_user_data(self.job_id, self._jro._paths, self._jro._env)
                 for datum in self._user_data:
                     if FileTransfer.ARCHIVE in datum:
                         # Restore archive to local temp dir and update user_data file entries

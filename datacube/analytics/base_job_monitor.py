@@ -14,28 +14,25 @@ class BaseJobMonitor(Worker):
     perform monitoring at the proper times.
     """
 
-    def __init__(self, name, config, decomposed):
-        super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, config)
+    def __init__(self, name, decomposed, paths=None, env=None, output_dir=None):
+        super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, paths, env, output_dir)
         self._decomposed = decomposed
 
     def wait_for_workers(self):
         '''Base job only completes once all subjobs are complete.'''
         jobs_ready = False
-        for tstep in range(150):  # Cap the number of checks
+        for tstep in range(50):  # Cap the number of checks
             all_statuses = []  # store all job and result statuses in this list
             for job in self._decomposed['jobs']:
                 try:
                     all_statuses.append(self._store.get_job_status(job['id']))
                 except ValueError as e:
                     pass
-                for result_descriptor in job['result_descriptors'].values():
-                    try:
-                        all_statuses.append(self._store.get_result_status(result_descriptor['id']))
-                    except ValueError as e:
-                        pass
             if any(js != JobStatuses.COMPLETED for js in all_statuses):
+                self.logger.info('Waiting... %s', all_statuses)
                 sleep(0.5)
             else:
+                self.logger.info('All subjobs completed! %s', all_statuses)
                 jobs_ready = True
                 break
         if not jobs_ready:
@@ -47,23 +44,5 @@ class BaseJobMonitor(Worker):
         Wait for subjobs to complete then update result descriptors.
         '''
         self.wait_for_workers()
-
-        # Get first worker job and copy properties from it to base job
-        job0 = self._decomposed['jobs'][0]
-
-        # TODO: Fix this with delayed descriptors, use total_shape from first query.
-        if job0['data']:
-            total_shape = job0['data'][sorted(job0['data'])[0]]['total_shape']
-        else:
-            total_shape = None
-
-        # TODO: this way of getting base result shape will not work if job data decomposed into
-        # smaller chunks
-        for array_name, result_descriptor in self._decomposed['base']['result_descriptors'].items():
-            # Use the dtype from the first sub-job as dtype for the base result, for that aray_name
-            sub_result_id = job0['result_descriptors'][array_name]['id']
-            dtype = self._store.get_result(sub_result_id).descriptor['dtype']
-            self.update_result_descriptor(result_descriptor,
-                                          total_shape,
-                                          dtype)
         self.job_finishes(self._decomposed['base'])
+        self.logger.info('Base job monitor completed')

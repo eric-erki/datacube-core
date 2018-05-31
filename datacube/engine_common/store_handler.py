@@ -52,10 +52,9 @@ class FunctionMetadata(object):
 
 class JobMetadata(object):
     '''Job metadata.'''
-    def __init__(self, function_id, data_id, result_id, ttl, chunk, timestamp):
+    def __init__(self, function_id, data_id, ttl, chunk, timestamp):
         self.function_id = function_id
         self.data_id = data_id
-        self.result_id = result_id
         self.ttl = ttl
         self.chunk = chunk
         self.timestamp = timestamp
@@ -222,7 +221,7 @@ class StoreHandler(object):
         return [loads(log) for log in
                 self._store.lrange(self._make_logs_key(key, str(item_id)), 0, -1)]
 
-    def add_job(self, function_type, function, data, result_id, ttl=-1, chunk=None):
+    def add_job(self, function_type, function, data, ttl=-1, chunk=None):
         '''Add an new function and its data to the queue.
 
         Both get serialised for storage. `data` is optional in case a job doesn't have any explicit
@@ -234,11 +233,11 @@ class StoreHandler(object):
         function_id = self._add_item(self.K_FUNCTIONS, func)
         data_id = self._add_item(self.K_DATA, data) if data else -1
         timestamp = None  # TODO: do we use redis or worker time?
-        job = JobMetadata(function_id, data_id, result_id, ttl, chunk, timestamp)
+        job = JobMetadata(function_id, data_id, ttl, chunk, timestamp)
         return self._add_item(self.K_JOBS, job)
 
-    def add_result(self, result):
-        '''Add a result or list or result ids to the store.
+    def add_result(self, job_id, result):
+        '''Add a result or list or result ids to a given job.
 
         Returns:
           The result id.
@@ -246,7 +245,10 @@ class StoreHandler(object):
         if not isinstance(result, (ResultMetadata, list, tuple)):
             raise ValueError('Invalid result type ({}). It must be ResultMetadata or list of IDs.'
                              .format(type(result)))
-        return self._add_item(self.K_RESULTS, result)
+        result_id = self._add_item(self.K_RESULTS, result)
+        self._store.rpush(self._make_key(self.K_JOBS, self.K_RESULTS, str(job_id)),
+                          result_id)
+        return result_id
 
     def update_result(self, result_id, result):
         '''Update a result id in the store.'''
@@ -289,6 +291,11 @@ class StoreHandler(object):
         '''Retrieve a specific JobMetadata.'''
         return self._get_item(self.K_JOBS, job_id)
 
+    def get_job_results(self, job_id):
+        '''Retrieve the results IDs for a specific job.'''
+        return [int(result_id) for result_id in
+                self._store.lrange(self._make_key(self.K_JOBS, self.K_RESULTS, str(job_id)), 0, -1)]
+
     def get_function(self, function_id):
         '''Retrieve a specific function.'''
         return self._get_item(self.K_FUNCTIONS, function_id)
@@ -301,6 +308,22 @@ class StoreHandler(object):
         '''Retrieve a specific result.'''
         return self._get_item(self.K_RESULTS, result_id)
 
+    def get_results_for_job(self, job_id):
+        '''Get all results for a job, including results of subjobs if applicable.'''
+        # First check the job exists
+        self.get_job(job_id)
+        results = {}
+        # Results for the main job_id
+        for result_id in self.get_job_results(job_id):
+            results[result_id] = self.get_result(result_id)
+        # Fetch results for all potential dependencies
+        try:
+            for sub_job_id in self.get_job_dependencies(job_id)[0]:
+                results.update(self.get_results_for_job(sub_job_id))
+        except ValueError:  # No dependencies
+            pass
+        return results
+
     def get_job_status(self, job_id):
         '''Retrieve the status of a job.'''
         return JobStatuses(int(self._get_item_status(self.K_JOBS, job_id)))
@@ -311,7 +334,8 @@ class StoreHandler(object):
 
     def get_job_dependencies(self, job_id):
         '''Retrieve job dependencies, a tuple of a list of jobs ids and a list of result ids.'''
-        (jobs, results) = self._get_item(self._make_key(self.K_JOBS, self.K_DEPENDENCIES), job_id)
+        (jobs, results) = self._get_item(self._make_key(self.K_JOBS, self.K_DEPENDENCIES),
+                                         job_id)
         return (jobs or [], results or [])
 
     def get_result_status(self, result_id):
@@ -413,11 +437,21 @@ class StoreHandler(object):
         Each subjob may store its own dictionary, and the list
         collates them all.
         '''
+        # First check the job exists
+        self.get_job(job_id)
         user_data = []
-        for sub_job_id in self.get_job_dependencies(job_id)[0]:
-            data = self._get_item(self.K_USER_DATA, sub_job_id, allow_empty=True)
-            if data:
-                user_data.append(data)
+        # User data attached to job_id
+        data = self._get_item(self.K_USER_DATA, job_id, allow_empty=True)
+        if data:
+            user_data.append(data)
+        # User data attached to potential dependencies
+        try:
+            for sub_job_id in self.get_job_dependencies(job_id)[0]:
+                data = self._get_item(self.K_USER_DATA, sub_job_id, allow_empty=True)
+                if data:
+                    user_data.append(data)
+        except ValueError:
+            pass
         return user_data
 
     def __str__(self):
@@ -451,7 +485,7 @@ class StoreHandler(object):
         for key in sorted(self._store.keys()):
             val_type = self._store.type(key)
             if val_type == b'string':
-                output.append(self._decode_string(self._store.get(key), key))
+                output.append(self._decode_string(self._store.get(key), key)[:400])
             elif val_type == b'hash':
                 output.append('{}:'.format(key.decode('utf-8')))
                 for skey in self._store.hkeys(key):

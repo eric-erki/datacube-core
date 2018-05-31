@@ -15,18 +15,18 @@ class UpdateActions(Enum):
     GET_JOB_STATUS = 1
     GET_RESULT_STATUS = 2
     GET_RESULT = 3
-    GET_JOB_USER_DATA = 4
+    GET_ALL_RESULTS = 4
+    GET_JOB_USER_DATA = 5
 
 
 class UpdateEngineV2(object):
 
-    def __init__(self, config=None):
+    def __init__(self, paths, env):
         '''Initialise the update engine.'''
         # For now, this is not inheriting Worker since it would create a Datacube object and offer
         # methods that may not get used
         self.logger = logging.getLogger(self.__class__.__name__)
-        if not config:
-            config = LocalConfig.find()
+        config = LocalConfig.find(paths, env) if paths and env else LocalConfig.find()
         self._store = StoreHandler(**config.redis_config)
         self.logger.debug('Ready')
 
@@ -41,6 +41,8 @@ class UpdateEngineV2(object):
             result = self._store.get_result_status(item_id)
         elif action == UpdateActions.GET_RESULT:
             result = self._store.get_result(item_id)
+        elif action == UpdateActions.GET_ALL_RESULTS:
+            result = self._store.get_results_for_job(item_id)
         elif action == UpdateActions.GET_JOB_USER_DATA:
             result = self._store.get_user_data(item_id)
         return result

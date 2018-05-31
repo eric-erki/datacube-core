@@ -2,11 +2,12 @@ from __future__ import absolute_import, print_function
 
 import logging
 import time
+from math import ceil
 from pprint import pformat
 from six.moves import zip
 
 from .worker import Worker
-from datacube.engine_common.store_handler import FunctionTypes, ResultTypes, ResultMetadata
+from datacube.engine_common.store_handler import FunctionTypes
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
@@ -31,8 +32,8 @@ class AnalyticsEngineV2(Worker):
         'ttl': -1
     }
 
-    def __init__(self, name, config=None):
-        super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, config)
+    def __init__(self, name, paths=None, env=None, output_dir=None):
+        super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, paths, env, output_dir)
 
     def analyse(self, function, function_params, data, user_tasks, *args, **kwargs):
         '''user - job submit
@@ -83,11 +84,10 @@ class AnalyticsEngineV2(Worker):
         '''Decompose the function and data.
 
         The decomposition of function over data creates one or more jobs. Each job has its own
-        decomposed function, and will create one or more results. This function returns a dictionary
-        describing the base job and the list of decomposed jobs, each with their store ids as
-        required.
+        decomposed function, and will create one or more results during execution. This function
+        returns a dictionary describing the base job and the list of decomposed jobs, each with
+        their ids as required.
         '''
-        # == Mock implementation ==
         # Prepare the sub-jobs and base job info
         jobs = self._create_jobs(function, data, function_params, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
@@ -96,52 +96,32 @@ class AnalyticsEngineV2(Worker):
             'jobs': jobs
         }
 
-    def _store_job(self, job, dependent_job_ids=None, dependent_result_ids=None):
-        '''Store a job, its data, results and dependencies in the store.
+    def _store_job(self, job, dependent_job_ids=None):
+        '''Store a job, its data and dependencies in the store.
 
         The job metadata passed as first parameter is updated in place, basically adding all item
         ids in the store.
         '''
-        for field in ('function_type', 'function', 'data', 'result_descriptors'):
+        for field in ('function_type', 'function', 'data'):
             if field not in job:
                 raise ValueError('Missing "{}" in job description'.format(field))
-        result_ids = []
-        if job['result_descriptors']:
-            for descriptor in job['result_descriptors'].values():
-                result_metadata = ResultMetadata(ResultTypes.FILE, descriptor)
-                result_id = self._store.add_result(result_metadata)
-                # Assign id to result descriptor dict (in place)
-                descriptor['id'] = result_id
-                descriptor['base_name'] = 'result_{:07d}'.format(result_id)
-                result_ids.append(result_id)
-            result_id = self._store.add_result(result_ids)
-        else:
-            result_id = None
         job_id = self._store.add_job(job['function_type'],
                                      job['function'],
-                                     job['data'],
-                                     result_id)
+                                     job['data'])
         # Add dependencies
-        self._store.add_job_dependencies(job_id, dependent_job_ids, dependent_result_ids)
-        job.update({
-            'id': job_id,
-            'result_id': result_id,
-        })
+        self._store.add_job_dependencies(job_id, dependent_job_ids)
+        job.update({'id': job_id})
 
     def _create_base_job(self, function_type, function, data, storage_params, user_tasks, dependent_jobs):
         '''Prepare the base job.'''
         if data:
-            # TODO: Fix this with delayed descriptors, create result descriptors for only first one.
-            descriptors = self._create_result_descriptors(data[sorted(data)[0]]['measurements'], storage_params['chunk'])
-
             job = {
                 'function_type': function_type,
                 'function': function,
                 'user_tasks': user_tasks,
                 'data': data,
                 'ttl': storage_params['ttl'],
-                'chunk': storage_params['chunk'],
-                'result_descriptors': descriptors
+                'chunk': storage_params['chunk']
             }
         else:
             descriptors = {}
@@ -151,8 +131,7 @@ class AnalyticsEngineV2(Worker):
                 'user_tasks': user_tasks,
                 'data': data,
                 'ttl': None,
-                'chunk': None,
-                'result_descriptors': descriptors
+                'chunk': None
             }
         dependent_job_ids = [dep_job['id'] for dep_job in dependent_jobs]
         # Store and modify job in place to add store ids
@@ -188,7 +167,6 @@ class AnalyticsEngineV2(Worker):
             decomposed_item['chunk_ids'] = chunk_ids
             decomposed_item['total_shape'] = total_shape
             decomposed_data[name] = decomposed_item
-
         return decomposed_data
 
     def _decompose_function(self, function, data, function_params, storage_params, user_tasks):
@@ -203,15 +181,18 @@ class AnalyticsEngineV2(Worker):
                     'data': None,
                     'function_params': function_params,
                     'slice': None,
-                    'chunk_id': None,
-                    'result_descriptors': {}
+                    'chunk_id': None
                 }
                 sub_jobs.append(job)
         elif data is not None:
             job_data = self._decompose_data(data, storage_params)
             # TODO: fix this with delayed descriptors, this works because of common decomposition.
             first_query = job_data[sorted(job_data)[0]]
-            for chunk_id, s in zip(first_query['chunk_ids'], first_query['indices']):
+
+            positions = tuple(tuple(int(s.start / storage_params['chunk'][i])
+                                    for i, s in enumerate(index))
+                              for index in first_query['indices'])
+            for chunk_id, s, position  in zip(first_query['chunk_ids'], first_query['indices'], positions):
                 job = {
                     'function_type': FunctionTypes.PICKLED,
                     'function': function,
@@ -219,33 +200,12 @@ class AnalyticsEngineV2(Worker):
                     'data': job_data,
                     'function_params': function_params,
                     'slice': s,
+                    'position': position,
+                    'total_cells': max(positions),
                     'chunk_id': chunk_id,
-                    'result_descriptors': self._create_result_descriptors(
-                        first_query['query']['measurements'],
-                        storage_params['chunk'])
                 }
                 sub_jobs.append(job)
         return sub_jobs
-
-    def _create_result_descriptors(self, bands, chunk):
-        '''Create mock result descriptors.'''
-        # == Mock implementation ==
-        if self._ee_config['use_s3']:
-            result_type = ResultTypes.S3IO
-        else:
-            result_type = ResultTypes.FILE
-        descriptors = {}
-        for band in bands:
-            descriptors[band] = {
-                'type': result_type,
-                'load_type': LoadType.EAGER,
-                'base_name': None,  # Not yet known
-                'bucket': self._ee_config['result_bucket'],
-                'shape': None,  # Not yet known
-                'chunk': chunk,
-                'dtype': None  # Not yet known
-            }
-        return descriptors
 
     def _get_jro_params(self, job):
         '''Create the parameters allowing to create a JobResult.'''
@@ -253,7 +213,7 @@ class AnalyticsEngineV2(Worker):
             'id': job['id']
             }
         result_descriptor = {
-            'id': job['result_id'],
-            'results': job['result_descriptors']
+            'id': None,
+            'results': {}
         }
         return (job_descriptor, result_descriptor)

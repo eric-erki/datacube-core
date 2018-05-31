@@ -81,7 +81,7 @@ def launch_worker_thread(url):
     """Only used for pytests"""
     app.conf.update(result_backend=url,
                     broker_url=url)
-    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'INFO', '--autoscale=2,0']
+    argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'INFO', '--autoscale=3,0']
     app.worker_main(argv)
 
 
@@ -91,48 +91,41 @@ def stop_worker():
 
 
 @app.task
-def update_config(local_config):
-    '''Only used for pytests.'''
-    global config
-    config = local_config
-
-
-@app.task
 def run_python_function_base(function, function_params=None, data=None,
-                             user_tasks=None, *args, **kwargs):
+                             user_tasks=None, paths=None, env=None, output_dir=None,
+                             *args, **kwargs):
     '''Process the function and data submitted by the user.'''
-    analytics_engine = AnalyticsEngineV2('Analytics Engine', config)
+    analytics_engine = AnalyticsEngineV2('Analytics Engine', paths, env, output_dir)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
     jro, decomposed = analytics_engine.analyse(function, function_params, data, user_tasks, *args, **kwargs)
-    monitor_jobs.delay(decomposed)
-    results = []
+    monitor_jobs.delay(decomposed, paths, env, output_dir)
     for job in decomposed['jobs']:
-        results.append(run_python_function_subjob.delay(job, decomposed['base']['result_descriptors'], *args, **kwargs))
-    return (jro, results)
+        run_python_function_subjob.delay(job, jro[0]['id'], paths, env, output_dir, *args, **kwargs)
+    return jro
 
 
 @app.task
-def run_python_function_subjob(job, base_results, *args, **kwargs):
+def run_python_function_subjob(job, base_job_id, paths=None, env=None, output_dir=None,
+                               *args, **kwargs):
     '''Process a subjob, created by the base job.'''
-    execution_engine = ExecutionEngineV2('Execution Engine', config)
+    execution_engine = ExecutionEngineV2('Execution Engine', paths, env, output_dir)
     if not execution_engine:
         raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
-    result = execution_engine.execute(job, base_results, *args, **kwargs)
-    return result
+    execution_engine.execute(job, base_job_id, *args, **kwargs)
 
 
 @app.task
-def monitor_jobs(decomposed):
+def monitor_jobs(decomposed, paths=None, env=None, output_dir=None):
     '''Monitors base job.'''
-    base_job_monitor = BaseJobMonitor('Base Job Monitor', config, decomposed)
+    base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, paths, env, output_dir)
     base_job_monitor.monitor_completion()
 
 
 @app.task
-def get_update(action, item_id):
+def get_update(action, item_id, paths=None, env=None):
     '''Return an update on a job or result.'''
-    update_engine = UpdateEngineV2(config)
+    update_engine = UpdateEngineV2(paths, env)
     if not update_engine:
         raise RuntimeError('Update engine must be initialised by calling `initialise_engines`')
     result = update_engine.execute(action, item_id)

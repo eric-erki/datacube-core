@@ -52,13 +52,10 @@ class AnalyticsClient(object):
                         broker_url=config.redis_celery_config['url'])
         self.logger.debug('Ready')
 
-    def update_config(self, config):
-        config_p = app.send_task('datacube.analytics.analytics_worker.update_config', args=(config, ))
-        config_p.get(disable_sync_subtasks=False)
-
     # pylint: disable=too-many-locals
     def submit_python_function(self, function, function_params=None, data=None,
-                               user_tasks=None, check_period=1, *args, **kwargs):
+                               user_tasks=None, check_period=1, paths=None, env=None,
+                               output_dir=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
@@ -79,7 +76,6 @@ class AnalyticsClient(object):
           subjob results.
         '''
         func = self._file_transfer.serialise(function)
-
         # compress files in function_params
         if function_params:
             for key, value in function_params.items():
@@ -94,14 +90,24 @@ class AnalyticsClient(object):
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
 
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(func, function_params, data, user_tasks), kwargs=kwargs)
+                                   args=(func, function_params, data, user_tasks,
+                                         paths, env, output_dir),
+                                   kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
-        jro = JobResult(*analysis[0], client=self)
+        jro = JobResult(*analysis, client=self, paths=paths, env=env)
         jro.checkForUpdate(check_period)
-        results = analysis[1]
-        return (jro, results)
+        return jro
 
-    def get_status(self, item):
+    def _get_update(self, action, item_id, paths=None, env=None):
+        '''Remotely invoke the `analytics_worker.get_update()` method.'''
+        # Minimal check: item ID must be an int
+        if not isinstance(item_id, int):
+            raise ValueError('Invalid job or result id: {}'.format(item_id))
+        data_p = app.send_task('datacube.analytics.analytics_worker.get_update',
+                               args=(action, item_id, paths, env))
+        return data_p.get(disable_sync_subtasks=False)
+
+    def get_status(self, item, paths=None, env=None):
         '''Return the status of a job or result.'''
         if isinstance(item, Job):
             action = UpdateActions.GET_JOB_STATUS
@@ -109,31 +115,29 @@ class AnalyticsClient(object):
             action = UpdateActions.GET_RESULT_STATUS
         else:
             raise ValueError('Can only return status of Job or Results')
-        status_p = app.send_task('datacube.analytics.analytics_worker.get_update',
-                                 args=(action, item.id))
-        status = status_p.get(disable_sync_subtasks=False)
-        return status
+        return self._get_update(action, item.id, paths, env)
 
-    def update_jro(self, jro):
-        for dataset in jro.results.datasets:
-            jro_result = jro.results.datasets[dataset]
-            result_p = app.send_task('datacube.analytics.analytics_worker.get_update',
-                                     args=(UpdateActions.GET_RESULT, jro_result.id))
-            result = result_p.get(disable_sync_subtasks=False)
-            jro_result.update(result.descriptor)
-            self.logger.debug('Redis result id=%s (%s) updated, needs to be pushed into LazyArray: '
-                              'shape=%s, dtype=%s',
-                              jro_result.id, dataset,
-                              result.descriptor['shape'], result.descriptor['dtype'])
+    def update_jro(self, jro, paths=None, env=None):
+        '''Update a JRO with all available result metadata.
 
+        The metadata is collected from the store and used to update the jro's arrays using its
+        `update_arrays()` method.
+        '''
+        results = self._get_update(UpdateActions.GET_ALL_RESULTS, jro.job.id, paths, env)
+        jro.results.update_arrays(results)
 
-    def get_user_data(self, job_id):
+    def get_result(self, result_id, paths=None, env=None):
+        '''Return the metadata of a specific result.'''
+        return self._get_update(UpdateActions.GET_RESULT, result_id, paths, env)
+
+    def get_user_data(self, job_id, paths=None, env=None):
         '''Return the user_data of a job.'''
-        # Minimal check: job ID must be an int
-        if not isinstance(job_id, int):
-            raise ValueError('Can only return user_data for a valid job id')
-        action = UpdateActions.GET_JOB_USER_DATA
-        user_data_p = app.send_task('datacube.analytics.analytics_worker.get_update',
-                                    args=(action, job_id))
-        user_data = user_data_p.get(disable_sync_subtasks=False)
-        return user_data
+        return self._get_update(UpdateActions.GET_JOB_USER_DATA, job_id, paths, env)
+
+    def workers_status(self):
+        active = app.control.inspect().active()
+        if active:
+            self.logger.debug('Active workers: %s',
+                              [task['name'].split('.')[-1] for task in active.popitem()[1]])
+        else:
+            self.logger.debug('No active workers')
