@@ -4,6 +4,7 @@ import imp
 import shutil
 from pathlib import Path
 
+import uuid
 import numpy
 import pytest
 import rasterio
@@ -55,7 +56,7 @@ ignore_me = pytest.mark.xfail(True, reason="get_data/get_description still to be
 
 @pytest.mark.usefixtures('default_metadata_type')
 @pytest.mark.parametrize('datacube_env_name', ('datacube', 's3aio_env', ), indirect=True)
-def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
+def test_end_to_end(clirunner, index, testdata_dir, ingest_configs, datacube_env_name):
     """
     Loads two dataset configurations, then ingests a sample Landsat 5 scene
 
@@ -102,6 +103,52 @@ def test_end_to_end(clirunner, index, testdata_dir, ingest_configs):
 
     check_open_with_dc(index)
     check_open_with_grid_workflow(index)
+    check_datacube_save(index, testdata_dir, datacube_env_name)
+
+
+def check_datacube_save(index, tmpdir, datacube_env_name):
+    from datacube.api.core import Datacube
+    from datacube.api.datacube_save import DatacubeSave
+
+    dc = Datacube(index=index)
+    data = {
+        'product': 'ls5_nbar_albers',
+        'measurements': ['blue', 'red'],
+        'x': (149.1, 149.2),
+        'y': (-35.2, -35.3)
+    }
+    data_array = dc.load(**data)
+
+    ds = DatacubeSave(dc)
+
+    if datacube_env_name == 's3aio_env':
+        folder = uuid.uuid4().hex[:10].upper()
+        tmpdir.mkdir(folder)
+        ds.save(data_array, str(tmpdir) + '/' + folder, 's3aio_test', 'dcsave_s3test', 'eo',
+                chunking={'time': 1, 'x': 100, 'y': 100})
+        data2 = {
+            'product': 'dcsave_s3test',
+            'measurements': ['blue', 'red'],
+        }
+
+        data_array2 = dc.load(**data2)
+
+        assert (data_array.blue == data_array2.blue).all()
+        assert (data_array.red == data_array2.red).all()
+
+    folder = uuid.uuid4().hex[:10].upper()
+    tmpdir.mkdir(folder)
+    ds.save(data_array, str(tmpdir) + '/' + folder, 'NetCDF CF', 'dcsave_netcdf', 'eo',
+            chunking={'time': 1, 'x': 100, 'y': 100})
+    data3 = {
+        'product': 'dcsave_netcdf',
+        'measurements': ['blue', 'red'],
+    }
+
+    data_array3 = dc.load(**data3)
+
+    assert (data_array.blue == data_array3.blue).all()
+    assert (data_array.red == data_array3.red).all()
 
 
 def check_open_with_dc(index):
