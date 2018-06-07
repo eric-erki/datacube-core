@@ -11,6 +11,7 @@ from datacube import Datacube
 from datacube.engine_common.store_handler import ResultTypes, ResultMetadata
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.engine_common.file_transfer import FileTransfer
+from datacube.engine_common.xarray_utils import get_array_descriptor
 from datacube.analytics.job_result import LoadType
 from datacube.analytics.worker import Worker
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
@@ -77,19 +78,6 @@ class ExecutionEngineV2(Worker):
         s3io.put_bytes(self._result_bucket, s3_key, data, True)
         return s3_key
 
-    def _xarray_descriptor(self, array):
-        d = {'coords': {}, 'attrs': decode_numpy_dict_values(array.attrs),
-             'dims': array.dims}
-        for k in array.coords:
-            data = ensure_us_time_resolution(array[k].values).tolist()
-            d['coords'].update({
-                k: {'data': data,
-                    'dims': array[k].dims,
-                    'attrs': decode_numpy_dict_values(array[k].attrs)}})
-        d.update({'data': None,
-                  'name': array.name})
-        return d
-
     def _save_array(self, base_job_id, job, output_name, band_name, array, chunk):
         '''Save a single array to s3 and its metadata in the store.
 
@@ -110,7 +98,7 @@ class ExecutionEngineV2(Worker):
             'dtype': array.dtype,
             'position': job['position'],
             'total_cells': job['total_cells'],
-            'xarray_descriptor': self._xarray_descriptor(array)
+            'xarray_descriptor': get_array_descriptor(array)
         }
         result_meta = ResultMetadata(self._result_type, descriptor)
         result_id = self._store.add_result(job['id'], result_meta)

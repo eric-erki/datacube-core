@@ -51,6 +51,7 @@ from copy import deepcopy
 import datacube
 from datacube.engine_common.store_handler import ResultTypes, JobStatuses
 from datacube.engine_common.file_transfer import FileTransfer
+from datacube.engine_common.xarray_utils import get_array_descriptor
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 
 
@@ -228,12 +229,13 @@ class LazyArray(object):
         self._output_dir = self._array_info['output_dir']
         self._cache = {}
         self._xarray_descriptor = None
+        self._shape = None
 
         if self._type in [ResultTypes.S3IO, ResultTypes.FILE]:
             # Initially, the shape, dtype and chunk size are not known as they are defined as
             # results get processed.
             self._shape_components = None
-            self._shape = None
+            self._coords_components = None
             self._chunk = None
             self._dtype = None
             self._base_name = self._array_info['base_name']
@@ -262,6 +264,9 @@ class LazyArray(object):
         We only need to know the shape of any `b` cell, as well as any cell in the last column and
         any cell in the last row, as well the total number of cells to determine the full
         shape. This means the LazyArray's shape can be determined before all results are returned.
+
+        Upon completion, the shape is compared to the xarray descriptor's number of coordinates in
+        each direction, if available.
         """
         if not self._shape:
             sub_shape = array_info['shape']
@@ -291,6 +296,63 @@ class LazyArray(object):
                     for length in component]):
                 self._shape = tuple(comps[0] * cells + comps[1]
                                     for comps, cells in zip(self._shape_components, total_cells))
+                self._check_array_shape()
+
+    def _update_xarray_descriptor(self, array_info):
+        """Progressively build the xarray descriptor for the full array.
+
+        Each time a result is produced, the corresponding sub-array is returned, with its own xarray
+        descriptor. It is assumed that all results related to the same LazyArray will share the same
+        attributes and dimensions, but they will all cover specific coordinates. This method
+        concatenates these coordinates until it has enough information to fully describe the full
+        array. Looking at a 2d example:
+
+        ```
+        [[a b c]
+         [d e f]
+        ```
+
+        Where each letter denotes a result (hence a sub-array) which has its own set of
+        coordinates. Knowing the coordinate sets of `{a, b, c, d}` for example, is enough to inform
+        the overall array. Basically, we need at least one cell for each slice in each
+        dimension. Hence, `{d, b, c}` would also be sufficient for example.
+
+        This method performs its job using the relative `position` of the result inside the overall
+        set of `total_cells`. It simply concatenates series of coordinates returned by the
+        sub-results, respecting the order of slices and coordinates, but not performing any data
+        check (e.g. duplicates or non-ordered coordinates). The only check performed is to validate
+        that the number of coordinates in each direction indeed match the shape of the LazyArray.
+        """
+        if not self._xarray_descriptor and array_info['xarray_descriptor']:
+            sub_coords = array_info['xarray_descriptor']['coords']
+            position =  array_info['position']
+            total_cells = array_info['total_cells']
+            if not self._coords_components:
+                # Allocate empty list (dims) of list (length along each dim) of coords
+                self._coords_components = [[None for i in range(l + 1)] for l in total_cells]
+            for dim_no, dim in enumerate(array_info['xarray_descriptor']['dims']):
+                if not self._coords_components[dim_no][position[dim_no]]:
+                    self._coords_components[dim_no][position[dim_no]] = sub_coords[dim]['data']
+
+            if not any(coord is None for dim_coords in self._coords_components
+                   for coord in dim_coords):
+                self._xarray_descriptor = deepcopy(array_info['xarray_descriptor'])
+                self._xarray_descriptor['coords'] = {
+                    dim: [c for cs in self._coords_components[dim_no] for c in cs]
+                    for dim_no, dim in enumerate(array_info['xarray_descriptor']['dims'])}
+                self._check_array_shape()
+
+    def _check_array_shape(self):
+        """Check that the LazyArray shape matches the number of coordinates.
+
+        This simple check is performed once, when both the shape and xarray descriptor have been
+        fully reconstructed from incoming sub-results.
+        """
+        if self._shape and self._xarray_descriptor:
+            lengths = tuple(len(self._xarray_descriptor['coords'][dim])
+                            for dim in self._xarray_descriptor['dims'])
+            assert self._shape == lengths, 'LazyArray concatenated shape does not match ' \
+                'concatenated xarray coords lengths: {} vs. {}'.format(self._shape, lengths)
 
     def update(self, array_info):
         """Update LazyArray with new information
@@ -299,6 +361,7 @@ class LazyArray(object):
             - make it work for ResultTypes.INDEXED:
         """
         self._update_shape(array_info)
+        self._update_xarray_descriptor(array_info)
         if not self._dtype:
             self._dtype = array_info['dtype']
         if not self._chunk:
@@ -488,6 +551,7 @@ class LazyArray(object):
         array_info['output_dir'] = output_dir
         array_info['position'] = (0, 0, 0)
         array_info['total_cells'] = (0, 0, 0)
+        array_info['xarray_descriptor'] = get_array_descriptor(array)
         return array_info
 
     @staticmethod
