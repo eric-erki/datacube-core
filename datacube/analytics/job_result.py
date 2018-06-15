@@ -47,6 +47,7 @@ from dask.array import Array
 from enum import Enum
 import xarray as xr
 from copy import deepcopy
+from time import monotonic
 
 import datacube
 from datacube.engine_common.store_handler import ResultTypes, JobStatuses
@@ -112,15 +113,19 @@ class JobResult(object):
     def status(self):
         return self._status
 
-    def checkForUpdate(self, period):
+    def checkForUpdate(self, period, start_time):
         """Starts a periodic timer to check and update the JRO
         """
         if self.job.status == JobStatuses.COMPLETED:
             self.client.update_jro(self, self._paths, self._env)
             self._status = JobStatuses.COMPLETED
             print("Job is Completed")
+            print(monotonic() - start_time)
+        elif self.job.status == JobStatuses.WALLTIME_EXCEEDED:
+            self._status = JobStatuses.WALLTIME_EXCEEDED
+            print("Job exceeded walltime")
         else:
-            self._timer = threading.Timer(period, self.checkForUpdate, [period]).start()
+            self._timer = threading.Timer(period, self.checkForUpdate, [period, start_time]).start()
 
 
 class Job(object):

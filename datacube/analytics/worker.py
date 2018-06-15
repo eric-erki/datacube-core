@@ -33,11 +33,11 @@ class Worker(object):
         self._store.add_worker_logs(self._id, message)
         self.logger.debug(message)
 
-    def job_finishes(self, job):
-        '''Set job to completed status.'''
+    def job_finishes(self, job, job_status):
+        '''Set job to actual status.'''
         job_id = job['id']
         # Stop job
-        self._store.set_job_status(job_id, JobStatuses.COMPLETED)
+        self._store.set_job_status(job_id, job_status)
         message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,
                                                      self._store.get_job_status(job_id).name)
         self._store.add_worker_logs(self._id, message)

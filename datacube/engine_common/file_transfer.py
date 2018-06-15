@@ -5,9 +5,11 @@ from shutil import rmtree
 from tempfile import mkdtemp
 from sys import version_info
 from zstd import ZstdDecompressor, ZstdCompressor
-from dill import loads, dumps
+from dill import loads
 from zlib import error as ZlibError
 import numpy as np
+
+from datacube.engine_common.pickle_utils import dumps
 
 
 class FileTransfer(object):

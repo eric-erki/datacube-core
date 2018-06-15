@@ -1,6 +1,6 @@
 from __future__ import absolute_import, print_function
 
-from time import sleep
+from time import sleep, monotonic
 from threading import Thread
 
 from .worker import Worker
@@ -14,14 +14,28 @@ class BaseJobMonitor(Worker):
     perform monitoring at the proper times.
     """
 
-    def __init__(self, name, decomposed, paths=None, env=None, output_dir=None):
+    def __init__(self, name, decomposed, subjob_tasks, walltime, paths=None, env=None, output_dir=None):
         super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, paths, env, output_dir)
         self._decomposed = decomposed
+        self._walltime = walltime
+        self._walltime_in_secs = self._walltime_to_sec(walltime)
+        self._subjob_tasks = subjob_tasks
+        self._start_time = monotonic()
+
+    def _walltime_to_sec(self, walltime):
+        hours, minutes, seconds = walltime.split(':')
+        return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
 
     def wait_for_workers(self):
         '''Base job only completes once all subjobs are complete.'''
-        jobs_ready = False
-        for tstep in range(50):  # Cap the number of checks
+        jobs_completed = False
+        walltime_exceeded = False
+
+        while True:
+            elapsed_time = monotonic() - self._start_time
+            if elapsed_time > self._walltime_in_secs:
+                walltime_exceeded = True
+                break
             all_statuses = []  # store all job and result statuses in this list
             for job in self._decomposed['jobs']:
                 try:
@@ -33,16 +47,29 @@ class BaseJobMonitor(Worker):
                 sleep(0.5)
             else:
                 self.logger.info('All subjobs completed! %s', all_statuses)
-                jobs_ready = True
+                self.logger.info('Time elapsed %d seconds', elapsed_time)
+                jobs_completed = True
                 break
-        if not jobs_ready:
-            raise RuntimeError('Some subjobs did not complete')
+
+        if jobs_completed:
+            return JobStatuses.COMPLETED
+
+        if walltime_exceeded:
+            self.logger.info('Walltime %s exceeded! Killing all sub-jobs', self._walltime)
+            self.kill_subjobs()
+            return JobStatuses.WALLTIME_EXCEEDED
+
+        return JobStatuses.ERRORED
 
     def monitor_completion(self):
         '''Track the completion of subjobs.
 
         Wait for subjobs to complete then update result descriptors.
         '''
-        self.wait_for_workers()
-        self.job_finishes(self._decomposed['base'])
+        job_status = self.wait_for_workers()
+        self.job_finishes(self._decomposed['base'], job_status)
         self.logger.info('Base job monitor completed')
+
+    def kill_subjobs(self):
+        for job in self._subjob_tasks:
+            job.revoke(terminate=True)

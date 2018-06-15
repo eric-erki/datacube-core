@@ -91,17 +91,22 @@ def stop_worker():
 
 
 @app.task
-def run_python_function_base(function, function_params=None, data=None,
-                             user_tasks=None, paths=None, env=None, output_dir=None,
+def run_python_function_base(function, function_params=None, data=None, user_tasks=None,
+                             walltime=None, paths=None, env=None, output_dir=None,
                              *args, **kwargs):
     '''Process the function and data submitted by the user.'''
     analytics_engine = AnalyticsEngineV2('Analytics Engine', paths, env, output_dir)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
     jro, decomposed = analytics_engine.analyse(function, function_params, data, user_tasks, *args, **kwargs)
-    monitor_jobs.delay(decomposed, paths, env, output_dir)
+
+    subjob_tasks = []
     for job in decomposed['jobs']:
-        run_python_function_subjob.delay(job, jro[0]['id'], paths, env, output_dir, *args, **kwargs)
+        subjob_tasks.append(run_python_function_subjob.delay(job, jro[0]['id'], paths, env, output_dir,
+                                                             *args, **kwargs))
+
+    monitor_task = monitor_jobs.delay(decomposed, subjob_tasks, walltime, paths, env, output_dir)
+
     return jro
 
 
@@ -116,9 +121,9 @@ def run_python_function_subjob(job, base_job_id, paths=None, env=None, output_di
 
 
 @app.task
-def monitor_jobs(decomposed, paths=None, env=None, output_dir=None):
+def monitor_jobs(decomposed, subjob_tasks, walltime, paths=None, env=None, output_dir=None):
     '''Monitors base job.'''
-    base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, paths, env, output_dir)
+    base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, subjob_tasks, walltime, paths, env, output_dir)
     base_job_monitor.monitor_completion()
 
 

@@ -5,6 +5,7 @@ from __future__ import absolute_import
 
 import os
 import logging
+from time import monotonic
 from celery import Celery
 
 from datacube.engine_common.store_handler import StoreHandler
@@ -54,7 +55,7 @@ class AnalyticsClient(object):
 
     # pylint: disable=too-many-locals
     def submit_python_function(self, function, function_params=None, data=None,
-                               user_tasks=None, check_period=1, paths=None, env=None,
+                               user_tasks=None, walltime='00:00:30', check_period=1, paths=None, env=None,
                                output_dir=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
@@ -90,12 +91,12 @@ class AnalyticsClient(object):
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
 
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(func, function_params, data, user_tasks,
+                                   args=(func, function_params, data, user_tasks, walltime,
                                          paths, env, output_dir),
                                    kwargs=kwargs)
         analysis = analysis_p.get(disable_sync_subtasks=False)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
-        jro.checkForUpdate(check_period)
+        jro.checkForUpdate(check_period, monotonic())
         return jro
 
     def _get_update(self, action, item_id, paths=None, env=None):

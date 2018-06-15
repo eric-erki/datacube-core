@@ -32,6 +32,7 @@ class JobStatuses(IntEnum):
     COMPLETED = 3
     CANCELLED = 4
     ERRORED = 5
+    WALLTIME_EXCEEDED = 6
 
 
 class ResultTypes(Enum):

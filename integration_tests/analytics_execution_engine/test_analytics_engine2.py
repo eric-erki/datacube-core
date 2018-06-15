@@ -85,7 +85,7 @@ def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_
 
     client = AnalyticsClient(local_config)
     client.workers_status()
-    jro = client.submit_python_function(base_function, paths=local_config.files_loaded,
+    jro = client.submit_python_function(base_function, walltime='00:01:25', paths=local_config.files_loaded,
                                         env=local_config._env, output_dir=str(tmpdir), **params)
 
     # Wait a while for the main job to complete
@@ -115,13 +115,13 @@ def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
     filename = 'my_result.txt'
     text = 'This is an auxillary output file with some text'
 
-    def base_function(data, function_params=None, user_data=None):
+    def base_function(data, dc=None, function_params=None, user_data=None):
         # Example of import in the user function
         from pathlib import Path
         filepath = Path(function_params['output_dir']) / function_params['filename']
         # Example of user-data (auxillary file)
         with filepath.open('w') as f:
-            f.write(text)
+            f.write(function_params['text'])
         output = {}
         for query, input_data in data.items():
             output_data = input_data
@@ -133,6 +133,7 @@ def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
 
     function_params = {
         'filename': filename,
+        'text': text,
         'some_value': 2
     }
 
@@ -185,7 +186,7 @@ def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chu
     else:
         data = input_data
 
-    def base_function(data, function_params=None, user_data=None):
+    def base_function(data, dc=None, function_params=None, user_data=None):
         output = {}
         for query, input_data in data.items():
             output_data = input_data
@@ -242,7 +243,7 @@ def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
     #     return xr.Dataset({'new_quantity': new_quantity})
 
     # Simple transform
-    def band_transform(data, function_params=None, user_data=None):
+    def band_transform(data, dc=None, function_params=None, user_data=None):
         output = {}
         for query, input_data in data.items():
             output_data = input_data + 1000
@@ -266,7 +267,7 @@ def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
 
 def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data):
     '''Test for failure if both data and user_tasks are specified for a job.'''
-    def base_function(data, function_params=None, user_data=None):
+    def base_function(data, dc=None, function_params=None, user_data=None):
         return data['query_1']
     function_params = {
         'shp': (Path(__file__).parent / 'data' / 'polygons.shp').as_uri(),
@@ -288,7 +289,7 @@ def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config
 
 def check_submit_job_user_tasks(tmpdir, store_handler, local_config):
     '''Test submission of function witu user_tasks instead of data.'''
-    def base_function(data, function_params=None, user_task=None):
+    def base_function(data, dc=None, function_params=None, user_task=None):
         from pathlib import Path
         from osgeo.gdal import OpenEx
         filepath = Path(function_params['input_dir']) / user_task['filename']

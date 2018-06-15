@@ -8,7 +8,7 @@ from boto3.s3.transfer import TransferConfig
 from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolution
 
 from datacube import Datacube
-from datacube.engine_common.store_handler import ResultTypes, ResultMetadata
+from datacube.engine_common.store_handler import ResultTypes, ResultMetadata, JobStatuses
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.engine_common.file_transfer import FileTransfer
 from datacube.engine_common.xarray_utils import get_array_descriptor
@@ -68,7 +68,7 @@ class ExecutionEngineV2(Worker):
         '''Run the function on the data.'''
         # TODO: restore function according to its type
         func = self._file_transfer.deserialise(function)
-        return func(data, function_params, user_task)
+        return func(data, self._datacube, function_params, user_task)
 
     def _save_array_in_s3(self, array, base_name, chunk_id):
         '''Saves a single `xarray.DataArray` to s3/s3-file storage'''
@@ -132,7 +132,7 @@ class ExecutionEngineV2(Worker):
         job_id = job['id']
         output_files = {}
         if self._use_s3:
-            s3_bucket = 'eev2'
+            s3_bucket = self._result_bucket
             s3 = boto3.client('s3')
             transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
                                              multipart_threshold=8*1024*1024,
@@ -198,5 +198,5 @@ class ExecutionEngineV2(Worker):
             user_data['output'] = computed
 
         self.post_process(job, user_data)
-        self.job_finishes(job)
+        self.job_finishes(job, JobStatuses.COMPLETED)
         self.logger.info('Completed execution of subjob %d', job['id'])
