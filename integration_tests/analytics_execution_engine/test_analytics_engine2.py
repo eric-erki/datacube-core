@@ -190,6 +190,8 @@ def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chu
         output = {}
         for query, input_data in data.items():
             output_data = input_data
+            output_data.red.attrs = input_data.red.attrs.copy()
+            output_data.blue.attrs = input_data.blue.attrs.copy()
             output[query] = {
                 'chunk': output_data.blue.shape,  # will be incorrect for bottom/right cells
                 'data': output_data
@@ -229,6 +231,12 @@ def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chu
         data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
         np.testing.assert_array_equal(returned_calc.values, data_array.red.values)
 
+        # Check coordinates and attributes are the same
+        np.testing.assert_array_equal(returned_calc.x, data_array.red.x)
+        np.testing.assert_array_equal(returned_calc.y, data_array.red.y)
+        np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
+        np.testing.assert_array_equal(returned_calc.attrs, data_array.red.attrs)
+
     _submit('check_submit_job with chunk={}'.format(chunk),
             tmpdir, store_handler, local_config, base_function, test_callback,
             data=data)
@@ -247,6 +255,8 @@ def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
         output = {}
         for query, input_data in data.items():
             output_data = input_data + 1000
+            output_data.red.attrs = input_data.red.attrs.copy()
+            output_data.blue.attrs = input_data.blue.attrs.copy()
             output[query] = {
                 'chunk': output_data.blue.shape,  # will be incorrect for bottom/right cells
                 'data': output_data
@@ -259,6 +269,12 @@ def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
         dc = Datacube(index=index)
         data_array = dc.load(product='ls5_nbar_albers', latitude=(-35.32, -35.28), longitude=(149.07, 149.18))
         np.testing.assert_array_equal(returned_calc.values, data_array.red.values + 1000)
+
+        # Check coordinates and attributes are the same
+        np.testing.assert_array_equal(returned_calc.x, data_array.red.x)
+        np.testing.assert_array_equal(returned_calc.y, data_array.red.y)
+        np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
+        np.testing.assert_array_equal(returned_calc.attrs, data_array.red.attrs)
 
     _submit('check_do_the_math',
             tmpdir, store_handler, local_config, band_transform, test_callback,

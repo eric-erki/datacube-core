@@ -22,6 +22,7 @@ from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolutio
 from xarray import DataArray
 from dill import dumps, loads
 from copy import deepcopy
+from datacube.engine_common.xarray_utils import slice_metadata
 
 try:
     from StringIO import StringIO
@@ -426,12 +427,9 @@ class S3LIO(object):
             data[data_slice] = self.s3aio.get_slice_by_bbox(local_slice, shape, dtype, s3_bucket, s3_key)
 
         if use_geo:
-            xarray_descriptor = self.s3aio.s3io.get_bytes(s3_bucket, base_location + "_geo")
+            xarray_descriptor = self.get_coords(s3_bucket, base_location)
             if xarray_descriptor:
-                cctx = zstd.ZstdDecompressor()
-                xarray_descriptor = cctx.decompress(xarray_descriptor)
-                xarray_descriptor = loads(xarray_descriptor)
-                xarray_descriptor = self._slice_metadata(xarray_descriptor, array_slice)
+                xarray_descriptor = slice_metadata(xarray_descriptor, array_slice)
                 xarray_descriptor['data'] = data.tolist()
                 return DataArray.from_dict(xarray_descriptor)
         return data
@@ -477,12 +475,9 @@ class S3LIO(object):
         sa.delete(array_name)
 
         if use_geo:
-            xarray_descriptor = self.s3aio.s3io.get_bytes(s3_bucket, base_location + "_geo")
+            xarray_descriptor = self.get_coords(s3_bucket, base_location)
             if xarray_descriptor:
-                cctx = zstd.ZstdDecompressor()
-                xarray_descriptor = cctx.decompress(xarray_descriptor)
-                xarray_descriptor = loads(xarray_descriptor)
-                xarray_descriptor = self._slice_metadata(xarray_descriptor, array_slice)
+                xarray_descriptor = slice_metadata(xarray_descriptor, array_slice)
                 xarray_descriptor['data'] = data.tolist()
                 return DataArray.from_dict(xarray_descriptor)
         return data
@@ -518,9 +513,3 @@ class S3LIO(object):
         """
 
         pass
-
-    def _slice_metadata(self, descriptor, array_slice):
-        d = deepcopy(descriptor)
-        for dim, s in zip(d['dims'], array_slice):
-            d['coords'][dim]['data'] = d['coords'][dim]['data'][s]
-        return d

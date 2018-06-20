@@ -54,6 +54,7 @@ from datacube.engine_common.store_handler import ResultTypes, JobStatuses
 from datacube.engine_common.file_transfer import FileTransfer
 from datacube.engine_common.xarray_utils import get_array_descriptor
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
+from datacube.engine_common.xarray_utils import slice_metadata
 
 
 class JobResult(object):
@@ -342,9 +343,8 @@ class LazyArray(object):
             if not any(coord is None for dim_coords in self._coords_components
                    for coord in dim_coords):
                 self._xarray_descriptor = deepcopy(array_info['xarray_descriptor'])
-                self._xarray_descriptor['coords'] = {
-                    dim: [c for cs in self._coords_components[dim_no] for c in cs]
-                    for dim_no, dim in enumerate(array_info['xarray_descriptor']['dims'])}
+                for dim_no, dim in enumerate(array_info['xarray_descriptor']['dims']):
+                    self._xarray_descriptor['coords'][dim]['data'] = [c for cs in self._coords_components[dim_no] for c in cs]
                 self._check_array_shape()
 
     def _check_array_shape(self):
@@ -354,7 +354,7 @@ class LazyArray(object):
         fully reconstructed from incoming sub-results.
         """
         if self._shape and self._xarray_descriptor:
-            lengths = tuple(len(self._xarray_descriptor['coords'][dim])
+            lengths = tuple(len(self._xarray_descriptor['coords'][dim]['data'])
                             for dim in self._xarray_descriptor['dims'])
             assert self._shape == lengths, 'LazyArray concatenated shape does not match ' \
                 'concatenated xarray coords lengths: {} vs. {}'.format(self._shape, lengths)
@@ -442,14 +442,14 @@ class LazyArray(object):
             zipped = list(zip(keys, data_slices, local_slices, chunk_shapes, repeat(offset), chunk_ids))
 
             if self._load_type == LoadType.EAGER:
-                '''
-                xarray_dict = self._slice_metadata(self._xarray_descriptor, bounded_slice)
-                xarray_dict['data'] = s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
-                                                                  bounded_slice, self._bucket).to_list()
-                return xr.from_dict(xarray_dict)
-                '''
-                return xr.DataArray(s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
-                                                                bounded_slice, self._bucket, use_geo=True))
+                if self._xarray_descriptor: # EEv2.save()
+                    xarray_dict = slice_metadata(self._xarray_descriptor, bounded_slice)
+                    xarray_dict['data'] = s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
+                                                                      bounded_slice, self._bucket).tolist()
+                    return xr.DataArray.from_dict(xarray_dict)
+                else: # sharded array
+                    return xr.DataArray(s3lio.get_data_unlabeled_mp(self._base_name, self._shape, self._chunk, self._dtype,
+                                                                    bounded_slice, self._bucket, use_geo=True))
             elif self._load_type == LoadType.EAGER_CACHED:
                 missing_chunks = []
                 for a in zipped:
@@ -468,10 +468,11 @@ class LazyArray(object):
                 for _, data_slice, local_slice, _, _, chunk_id in zipped:
                     data[data_slice] = self._cache[chunk_id][local_slice]
 
+                # sharded array
                 if not self._xarray_descriptor:
                     self._xarray_descriptor = s3lio.get_coords(self._bucket, self._base_name)
-                if self._xarray_descriptor:
-                    xarray_descriptor = self._slice_metadata(self._xarray_descriptor, bounded_slice)
+                if self._xarray_descriptor: # sharded array or EEv2.save()
+                    xarray_descriptor = slice_metadata(self._xarray_descriptor, bounded_slice)
                     xarray_descriptor['data'] = data.tolist()
                     return xr.DataArray.from_dict(xarray_descriptor)
                 return data
@@ -517,12 +518,6 @@ class LazyArray(object):
             bounded_slice += (slice(0, self._shape[idx]),)
 
         return bounded_slice
-
-    def _slice_metadata(self, descriptor, array_slice):
-        d = deepcopy(descriptor)
-        for dim, s in zip(d['dims'], array_slice):
-            d['coords'][dim]['data'] = d['coords'][dim]['data'][s]
-        return d
 
     def __setitem__(self, slices, value):
         """Slicing operator to modify data stored on S3/DataCube
@@ -604,11 +599,11 @@ class Results(object):
             self._add_array(k, v)
 
     def to_dict(self):
-        if not self._id:
-            return None
+        # if not self._id:
+        #    return None
         return {
-            'id': self._id,
-            'status': self.status,
+            # 'id': self._id,
+            # 'status': self.status,
             'datasets': {k: v.to_dict() for k, v in self._datasets.items()}
         }
 
@@ -656,13 +651,23 @@ class Results(object):
         self._datasets.update({name: LazyArray(array_info)})
 
     def update_arrays(self, arrays):
+        chunk_sizes = {}
         for array_metadata in arrays.values():
             array_info = array_metadata.descriptor
+            position =  array_info['position']
+            total_cells = array_info['total_cells']
             name = '_'.join((array_info['output_name'], array_info['band']))
+            if name not in chunk_sizes:
+                chunk_sizes[name] = array_metadata.descriptor['chunk']
+            if all([(a < b) for a, b in zip(position, total_cells)]):
+                chunk_sizes[name] = array_metadata.descriptor['chunk']
             if name in self._datasets:
                 self._datasets[name].update(array_info)
             else:
                 self._datasets[name] = LazyArray(array_info)
+
+        for name in chunk_sizes:
+            self._datasets[name]['chunk'] = chunk_sizes[name]
 
     def __getattr__(self, key):
         if key in self._datasets:
