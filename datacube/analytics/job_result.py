@@ -651,23 +651,24 @@ class Results(object):
         self._datasets.update({name: LazyArray(array_info)})
 
     def update_arrays(self, arrays):
-        chunk_sizes = {}
+        chunk_size = None
+        for array_metadata in arrays.values():
+            array_info = array_metadata.descriptor
+            position =  array_info['position']
+            if np.sum(position) == 0:
+                chunk_size = array_metadata.descriptor['chunk']
+                break
+
         for array_metadata in arrays.values():
             array_info = array_metadata.descriptor
             position =  array_info['position']
             total_cells = array_info['total_cells']
+            array_info['chunk'] = chunk_size
             name = '_'.join((array_info['output_name'], array_info['band']))
-            if name not in chunk_sizes:
-                chunk_sizes[name] = array_metadata.descriptor['chunk']
-            if all([(a < b) for a, b in zip(position, total_cells)]):
-                chunk_sizes[name] = array_metadata.descriptor['chunk']
             if name in self._datasets:
                 self._datasets[name].update(array_info)
             else:
                 self._datasets[name] = LazyArray(array_info)
-
-        for name in chunk_sizes:
-            self._datasets[name]['chunk'] = chunk_sizes[name]
 
     def __getattr__(self, key):
         if key in self._datasets:
