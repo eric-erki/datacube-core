@@ -340,6 +340,9 @@ class Geometry(object):
 
     If 3D coordinates are supplied, they are converted to 2D by dropping the Z points.
 
+    :param geo: geometry as a GeoJSON dict structure
+    :param geometry.CRS crs: Coordinate Reference System
+
     :type _geom: ogr.Geometry
     :type crs: CRS
     """
@@ -458,6 +461,7 @@ class Geometry(object):
     def to_crs(self, crs, resolution=None, wrapdateline=False):
         """
         Convert geometry to a different Coordinate Reference System
+
         :param CRS crs: CRS to convert to
         :param float resolution: Subdivide the geometry such it has no segment longer then the given distance.
         :param bool wrapdateline: Attempt to gracefully handle geometry that intersects the dateline

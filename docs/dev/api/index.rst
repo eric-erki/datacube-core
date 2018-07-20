@@ -10,6 +10,7 @@ API reference
    dcindex.rst
    model.rst
    masking.rst
+   geometry.rst
    analytics_engine.rst
    s3block.rst
 

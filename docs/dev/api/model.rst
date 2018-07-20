@@ -3,6 +3,9 @@
 Model
 =====
 
+Core classes used across modules within Open Data Cube.
+
+
 
 .. automodule:: datacube.model
-    :members:
+    :members: Dataset, Measurement, MetadataType, DatasetType

@@ -86,6 +86,7 @@ Changes
 
 - Usability improvements in `datacube dataset [add|update]` commands
   (:issue:`447`, :issue:`448`, :issue:`398`)
+
   - Embedded documentation updates
   - Deprecated `--auto-match` (it was always on anyway)
   - Renamed `--dtype` to `--product` (the old name will still work, but with a warning)

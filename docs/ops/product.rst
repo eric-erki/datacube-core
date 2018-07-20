@@ -6,24 +6,33 @@ Product Definition
 Product description document defines some of the metadata common to all the datasets belonging to the products.
 It also describes the measurements that product has and some of the properties of the measurements.
 
-.. highlight:: language
 
 .. literalinclude:: ../config_samples/dataset_types/dsm1sv10.yaml
    :language: yaml
 
 name
-    Product name
+    A short name for a Product. This name is used all the time when specifying what type of
+    data to load.
+
+    .. code-block:: python
+       :emphasize-lines: 2
+
+       dc = Datacube()
+       data = dc.load(product='dsm1sv10')
 
 description
-    Product description
+    A long description of a product, describing in text where it has come from, and how it can
+    be used.
 
 metadata_type
-    Name of the :ref:`metadata-type-definition`
+    Name of the :ref:`metadata-type-definition`. This determines the structure of the Dataset
+    documents that will be a part of this Product, and which fields will be available for
+    searching.
 
 metadata
-    Dictionary containing bits of metadata common to all the datasets in the product.
+    A dictionary containing metadata common to all the datasets in the product.
 
-    It is used during indexing to match datasets to their products.
+    It is used when adding datasets to an Index to match datasets to their respective products.
 
 storage (optional)
     Describes some of common storage attributes of all the datasets. While optional defining this will make
@@ -37,7 +46,9 @@ storage (optional)
         Use ``latitude``, ``longitude`` if the projection is geographic and ``x``, ``y`` otherwise
 
 measurements
-    List of measurements in this product
+    A list of measurements in this product. A measurement is a particular variable. Generally a Product
+    will contain at least one measurement. Measurements could include different spectral bands of a
+    satellite product.
 
     name
          Name of the measurement
@@ -68,12 +79,12 @@ measurements
             flags_definition:
                 platform:
                   bits: [0,1,2,3]
-                  description: Platform name
+                  description: 'Platform name'
                   values:
-                    0: terra
-                    1: aqua_terra
-                    2: aqua
+                    0: 'terra'
+                    1: 'aqua_terra'
+                    2: 'aqua'
                 contiguous:
                   bits: 8
-                  description: All bands for this pixel contain non-null values
+                  description: 'All bands for this pixel contain non-null values'
                   values: {0: false, 1: true}
