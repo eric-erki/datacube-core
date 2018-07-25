@@ -15,7 +15,6 @@ from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
 from datacube.compat import urlparse
 
-
 def celery_app(store_config=None):
     try:
         if store_config is None:
@@ -89,15 +88,22 @@ class AnalyticsClient(object):
                         f = _data.read()
                         _data = self._file_transfer.compress(f)
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
-
-        analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(func, function_params, data, user_tasks, walltime,
-                                         paths, env, output_dir),
-                                   kwargs=kwargs)
-        analysis = analysis_p.get(disable_sync_subtasks=False)
+        analysis = self._run_python_function_base(func, function_params, data, user_tasks,
+                                                  walltime, paths, env, output_dir, **kwargs)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
         jro.checkForUpdate(check_period, monotonic())
         return jro
+
+
+    def _run_python_function_base(self, *args, **kwargs):
+        '''Run the function using celery.
+
+        This is placed in a separate method so it can be overridden
+        during tests.
+        '''
+        analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
+                                   args=args, kwargs=kwargs)
+        return analysis_p.get(disable_sync_subtasks=False)
 
     def _get_update(self, action, item_id, paths=None, env=None):
         '''Remotely invoke the `analytics_worker.get_update()` method.'''
@@ -135,10 +141,7 @@ class AnalyticsClient(object):
         '''Return the user_data of a job.'''
         return self._get_update(UpdateActions.GET_JOB_USER_DATA, job_id, paths, env)
 
-    def workers_status(self):
+    def __repr__(self):
         active = app.control.inspect().active()
-        if active:
-            self.logger.debug('Active workers: %s',
-                              [task['name'].split('.')[-1] for task in active.popitem()[1]])
-        else:
-            self.logger.debug('No active workers')
+        workers = [task['name'].split('.')[-1] for task in active.popitem()[1]] if active else []
+        return 'Analytics client: {} active workers: {}'.format(len(workers), workers)

@@ -20,7 +20,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 
 from datacube.engine_common.store_handler import StoreHandler, JobStatuses
-from datacube.analytics.analytics_worker import launch_ae_worker, stop_worker
+from datacube.analytics.analytics_worker import launch_ae_worker, stop_worker, run_python_function_base
 from datacube.analytics.analytics_client import AnalyticsClient
 from datacube.analytics.update_engine2 import UpdateEngineV2, UpdateActions
 from datacube.api.core import Datacube
@@ -75,7 +75,12 @@ def ee_celery(ee_config):
     process.terminate()
 
 
-def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_callback, **params):
+def run_python_function_base_direct(self, *args, **kargs):
+    '''Call worker without celery for proper test coverage accounting.'''
+    return run_python_function_base(*args, **kargs)
+
+
+def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback, **params):
     '''Submits a user function and runs a callback test function.
 
     This cleans the store before and after.
@@ -84,7 +89,13 @@ def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_
     logger.debug('{sep} Starting {} {sep}'.format(test_name, sep='='*20))
 
     client = AnalyticsClient(local_config)
-    client.workers_status()
+
+    # Override celery calls with direct calls, useful to get proper
+    # test coverage estimates
+    if not celery_enabled:
+        client._run_python_function_base = run_python_function_base_direct.__get__(client, AnalyticsClient)
+
+    logger.debug(client)
     jro = client.submit_python_function(base_function, walltime='00:01:25', paths=local_config.files_loaded,
                                         env=local_config._env, output_dir=str(tmpdir), **params)
 
@@ -107,10 +118,11 @@ def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_
         # Onus is on end user to clean output files copied locally
         if 'base_dir' in datum:
             rmtree(datum['base_dir'])
+
     logger.debug('{sep} Completed {} {sep}'.format(test_name, sep='='*20))
 
 
-def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
+def check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, input_data):
     '''Check retrieval of user data created by user function as files.'''
     filename = 'my_result.txt'
     text = 'This is an auxillary output file with some text'
@@ -170,11 +182,12 @@ def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
             for bucket, objects in to_delete.items():
                 s3.delete_objects(Bucket=bucket, Delete={'Objects': objects, 'Quiet': True})
 
-    _submit('check_submit_user_data', tmpdir, store_handler, local_config, base_function, test_callback,
+    _submit('check_submit_user_data', tmpdir, store_handler, local_config, celery_enabled,
+            base_function, test_callback,
             function_params=function_params, data=input_data)
 
 
-def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chunk=None):
+def check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, chunk=None):
     '''Test basic aspects of job submission.
 
     It checks the store data and also retrieves and checks the data through the JRO. The default
@@ -237,11 +250,11 @@ def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chu
         np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
 
     _submit('check_submit_job with chunk={}'.format(chunk),
-            tmpdir, store_handler, local_config, base_function, test_callback,
+            tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
             data=data)
 
 
-def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
+def check_do_the_math(tmpdir, store_handler, local_config, celery_enabled, index, input_data):
     '''Test basic band maths.'''
     # TODO: This kind of function not yet supported:
     # import xarray as xr
@@ -275,11 +288,11 @@ def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
         np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
 
     _submit('check_do_the_math',
-            tmpdir, store_handler, local_config, band_transform, test_callback,
+            tmpdir, store_handler, local_config, celery_enabled, band_transform, test_callback,
             data=input_data)
 
 
-def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data):
+def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data):
     '''Test for failure if both data and user_tasks are specified for a job.'''
     def base_function(data, dc=None, function_params=None, user_data=None):
         return data['query_1']
@@ -297,12 +310,12 @@ def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config
     # Cannot specify data and user_task at the same time
     with pytest.raises(ValueError):
         _submit('check_submit_invalid_data_and_user_tasks',
-                tmpdir, store_handler, local_config, base_function, test_callback,
+                tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
                 data=input_data, user_tasks=user_tasks)
 
 
-def check_submit_job_user_tasks(tmpdir, store_handler, local_config):
-    '''Test submission of function witu user_tasks instead of data.'''
+def check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled):
+    '''Test submission of function with user_tasks instead of data.'''
     def base_function(data, dc=None, function_params=None, user_task=None):
         from pathlib import Path
         from osgeo.gdal import OpenEx
@@ -361,7 +374,7 @@ def check_submit_job_user_tasks(tmpdir, store_handler, local_config):
             assert extents[feature_no] == expected_extent
 
     _submit('check_submit_job_user_tasks',
-            tmpdir, store_handler, local_config, base_function, test_callback,
+            tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
             function_params=function_params, user_tasks=user_tasks)
 
 

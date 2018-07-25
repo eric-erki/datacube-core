@@ -102,9 +102,6 @@ class AnalyticsEngineV2(Worker):
         The job metadata passed as first parameter is updated in place, basically adding all item
         ids in the store.
         '''
-        for field in ('function_type', 'function', 'data'):
-            if field not in job:
-                raise ValueError('Missing "{}" in job description'.format(field))
         job_id = self._store.add_job(job['function_type'],
                                      job['function'],
                                      job['data'])
@@ -150,9 +147,6 @@ class AnalyticsEngineV2(Worker):
         '''Decompose data into a list of chunks.'''
         # == Partial implementation ==
         # TODO: Add a loop: for dataset in datasets...
-        if data is None:
-            return None
-
         from copy import deepcopy
         decomposed_data = {}
 
