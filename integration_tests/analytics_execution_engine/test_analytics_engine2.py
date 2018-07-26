@@ -86,7 +86,7 @@ def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base
     This cleans the store before and after.
     '''
     logger = logging.getLogger(__name__)
-    logger.debug('{sep} Starting {} {sep}'.format(test_name, sep='='*20))
+    logger.debug('{sep} Starting {} (celery_enabled={}) {sep}'.format(test_name, celery_enabled, sep='='*20))
 
     client = AnalyticsClient(local_config)
 

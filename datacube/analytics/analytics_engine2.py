@@ -67,8 +67,8 @@ class AnalyticsEngineV2(Worker):
             storage.update(data['storage_params'])
         function_type = self._determine_function_type(function)
         decomposed = self._decompose(function_type, function, query, function_params, storage, user_tasks)
-        if logging.getLevelName(self.logger.getEffectiveLevel()) == 'DEBUG':
-            self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
+#        if logging.getLevelName(self.logger.getEffectiveLevel()) == 'DEBUG':
+#            self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
 
         # Run the base job
         self.job_starts(decomposed['base'])
