@@ -82,6 +82,7 @@ def run_python_function_base_direct(self, *args, **kargs):
         analysis = run_python_function_base(*args, **kargs)
     except Exception as e:
         print('*'*100, e)
+        raise
     return analysis
 
 
