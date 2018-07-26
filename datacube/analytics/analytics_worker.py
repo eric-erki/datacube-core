@@ -53,7 +53,7 @@ def celery_app(store_config=None):
 #     update_engine = UpdateEngineV2(config)
 
 # pylint: disable=invalid-name
-app = celery_app()
+app1 = celery_app()
 
 # TODO: In production environment, the engines need to be started using a local config identified
 # through `find()`. This is not desirable in pytest as it will use the default config which is
@@ -79,18 +79,18 @@ def launch_ae_worker(local_config):
 
 def launch_worker_thread(url):
     """Only used for pytests"""
-    app.conf.update(result_backend=url,
+    app1.conf.update(result_backend=url,
                     broker_url=url)
     argv = ['worker', '-A', 'datacube.analytics.analytics_worker', '-l', 'INFO', '--autoscale=3,0']
-    app.worker_main(argv)
+    app1.worker_main(argv)
 
 
 def stop_worker():
     """Only used for pytests"""
-    app.control.shutdown()
+    app1.control.shutdown()
 
 
-@app.task
+@app1.task
 def run_python_function_base(function, function_params=None, data=None, user_tasks=None,
                              walltime=None, paths=None, env=None, output_dir=None,
                              *args, **kwargs):
@@ -110,7 +110,7 @@ def run_python_function_base(function, function_params=None, data=None, user_tas
     return jro
 
 
-@app.task
+@app1.task
 def run_python_function_subjob(job, base_job_id, paths=None, env=None, output_dir=None,
                                *args, **kwargs):
     '''Process a subjob, created by the base job.'''
@@ -120,14 +120,14 @@ def run_python_function_subjob(job, base_job_id, paths=None, env=None, output_di
     execution_engine.execute(job, base_job_id, *args, **kwargs)
 
 
-@app.task
+@app1.task
 def monitor_jobs(decomposed, subjob_tasks, walltime, paths=None, env=None, output_dir=None):
     '''Monitors base job.'''
     base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, subjob_tasks, walltime, paths, env, output_dir)
     base_job_monitor.monitor_completion()
 
 
-@app.task
+@app1.task
 def get_update(action, item_id, paths=None, env=None):
     '''Return an update on a job or result.'''
     update_engine = UpdateEngineV2(paths, env)

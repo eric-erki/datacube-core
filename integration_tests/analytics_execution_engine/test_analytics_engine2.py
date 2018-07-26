@@ -77,7 +77,12 @@ def ee_celery(ee_config):
 
 def run_python_function_base_direct(self, *args, **kargs):
     '''Call worker without celery for proper test coverage accounting.'''
-    return run_python_function_base(*args, **kargs)
+    analysis = None
+    try:
+        analysis = run_python_function_base(*args, **kargs)
+    except Exception as e:
+        print('*'*100, e)
+    return analysis
 
 
 def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback, **params):
