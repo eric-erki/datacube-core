@@ -106,8 +106,8 @@ def test_s3_end_to_end(tmpdir, clirunner, index, testdata_dir, ingest_configs, s
     check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, input_data)
 
     # Test single chunk but with direct calls instead of celery, to test coverage
-    celery_enabled = False
-    check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, (1, 231, 420))
+    # celery_enabled = False
+    # check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, (1, 231, 420))
 
 
 @pytest.mark.usefixtures('default_metadata_type')
@@ -128,9 +128,9 @@ def test_s3_user_tasks(tmpdir, clirunner, index, testdata_dir, ingest_configs, s
     check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data)
 
     # Run these tests again with direct calls instead of celery to test coverage
-    celery_enabled = False
-    check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled)
-    check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data)
+    # celery_enabled = False
+    # check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled)
+    # check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data)
 
 
 def check_datacube_save(index, tmpdir, datacube_env_name):
