@@ -5,6 +5,7 @@ from __future__ import absolute_import, print_function
 
 import logging
 from enum import Enum
+from redis.exceptions import TimeoutError
 
 from datacube.engine_common.store_handler import StoreHandler
 from datacube.config import LocalConfig
@@ -35,14 +36,31 @@ class UpdateEngineV2(object):
         if action not in UpdateActions:
             raise ValueError('Invalid action: {}'.format(action))
         result = None
-        if action == UpdateActions.GET_JOB_STATUS:
-            result = self._store.get_job_status(item_id)
-        elif action == UpdateActions.GET_RESULT_STATUS:
-            result = self._store.get_result_status(item_id)
-        elif action == UpdateActions.GET_RESULT:
-            result = self._store.get_result(item_id)
-        elif action == UpdateActions.GET_ALL_RESULTS:
-            result = self._store.get_results_for_job(item_id)
-        elif action == UpdateActions.GET_JOB_USER_DATA:
-            result = self._store.get_user_data(item_id)
-        return result
+        last_error = None
+        for attempt in range(10):
+            try:
+                if action == UpdateActions.GET_JOB_STATUS:
+                    result = self._store.get_job_status(item_id)
+                elif action == UpdateActions.GET_RESULT_STATUS:
+                    result = self._store.get_result_status(item_id)
+                elif action == UpdateActions.GET_RESULT:
+                    result = self._store.get_result(item_id)
+                elif action == UpdateActions.GET_ALL_RESULTS:
+                    result = self._store.get_results_for_job(item_id)
+                elif action == UpdateActions.GET_JOB_USER_DATA:
+                    result = self._store.get_user_data(item_id)
+                return result
+            except ValueError as e:
+                raise e
+            except TimeoutError as e:
+                last_error = str(e)
+                print("error - UpdateEngineV2.execute()", str(type(e)), last_error)
+                self._store.reconnect()
+                continue
+            except Exception as e:
+                last_error = str(e)
+                print("error u - UpdateEngineV2.execute()", str(type(e)), last_error)
+                self._store.reconnect()
+                continue
+        # Exceeded max retries
+        raise RuntimeError('UpdateEngineV2.execute', 'exceeded max retries', last_error)

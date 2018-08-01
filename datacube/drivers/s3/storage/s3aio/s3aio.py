@@ -151,7 +151,7 @@ class S3AIO(object):
                  zip(cell + tuple(sub_range), offset)]
             if data.dtype != dtype:
                 data = np.frombuffer(data, dtype=dtype, count=-1, offset=0)
-            result[t] = data.reshape([s.stop - s.start for s in sub_range])
+            result[tuple(t)] = data.reshape([s.stop - s.start for s in sub_range])
 
         return result
 
@@ -188,7 +188,7 @@ class S3AIO(object):
                 data = np.frombuffer(data, dtype=dtype, count=-1, offset=0)
                 # data = data.reshape([s.stop - s.start for s in sub_range])
 
-            result[t] = data.reshape([s.stop - s.start for s in sub_range])
+            result[tuple(t)] = data.reshape([s.stop - s.start for s in sub_range])
 
         if self.enable_compression:
             return self.get_slice_by_bbox(array_slice, shape, dtype, s3_bucket, s3_key)
@@ -287,6 +287,6 @@ class S3AIO(object):
                  zip(cell + tuple(sub_range), offset)]
             if data.dtype != dtype:
                 data = np.frombuffer(data, dtype=dtype, count=-1, offset=0)
-            result[t] = data.reshape([s.stop - s.start for s in sub_range])
+            result[tuple(t)] = data.reshape([s.stop - s.start for s in sub_range])
 
         return result

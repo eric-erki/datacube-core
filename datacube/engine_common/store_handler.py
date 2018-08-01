@@ -97,12 +97,18 @@ class StoreHandler(object):
     K_LOGS = 'logs'
     K_STATS_STATUS = 'status'
     K_USER_DATA = 'userdata'
+    K_FUNCTION_PARAM = 'functionparam'
 
     def __init__(self, **redis_config):
         '''Initialise the data store interface.'''
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._redis_config = redis_config
+        self._store = StrictRedis(**redis_config, socket_keepalive=True, retry_on_timeout=True,
+                                  socket_connect_timeout=10, socket_timeout=10)
 
-        self._store = StrictRedis(**redis_config)
+    def reconnect(self):
+        self._store = StrictRedis(**self._redis_config, socket_keepalive=True, retry_on_timeout=True,
+                                  socket_connect_timeout=10, socket_timeout=10)
 
     def _make_key(self, *parts):
         '''Build a redis key using the agreed delimiter.
@@ -454,6 +460,30 @@ class StoreHandler(object):
         except ValueError:
             pass
         return user_data
+
+    def set_function_params(self, param_id, function_params=None):
+        '''Set or clear a job's function params, a dictionary of user-defined content.
+
+        Any existing values get overwritten. If user_data is empty,
+        then the key is cleared. Typically, this method is called by a
+        subjob, and the data stored will be retrieved for all subjobs
+        related to a base job.
+        '''
+        if function_params is None:
+            self._store.delete(self._make_key(self.K_FUNCTION_PARAM, str(param_id)))
+        elif not isinstance(function_params, dict):
+            raise ValueError('Invalid function params type ({}). It must be a dictionary.'
+                             .format(type(function_params)))
+        else:
+            self._set_item(self.K_FUNCTION_PARAM, param_id, function_params)
+
+    def get_function_params(self, param_id):
+        '''Get a job's function params, a list of dictionaries.
+        '''
+        # First check the job exists
+        # self.get_job(param_id)
+        # User data attached to param_id
+        return self._get_item(self.K_FUNCTION_PARAM, param_id, allow_empty=True)
 
     def __str__(self):
         '''Returns information about the store. For now, all its keys.'''

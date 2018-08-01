@@ -5,8 +5,9 @@ from __future__ import absolute_import
 
 import os
 import logging
-from time import monotonic
+from time import sleep, monotonic
 from celery import Celery
+from redis.exceptions import TimeoutError
 
 from datacube.engine_common.store_handler import StoreHandler
 from datacube.engine_common.file_transfer import FileTransfer
@@ -14,6 +15,7 @@ from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
 from datacube.compat import urlparse
+
 
 def celery_app(store_config=None):
     try:
@@ -28,7 +30,14 @@ def celery_app(store_config=None):
         task_serializer='pickle',
         result_serializer='pickle',
         accept_content=['pickle'],
-        worker_prefetch_multiplier=1)
+        worker_prefetch_multiplier=1,
+        broker_pool_limit=100,
+        broker_connection_retry=True,
+        broker_connection_timeout=4,
+        broker_transport_options={'socket_keepalive': True, 'retry_on_timeout': True,
+                                  'socket_connect_timeout': 10, 'socket_timeout': 10},
+        redis_socket_connect_timeout=10,
+        redis_socket_timeout=10)
     return _app
 
 
@@ -75,6 +84,7 @@ class AnalyticsClient(object):
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
           subjob results.
         '''
+        start_time = monotonic()
         func = self._file_transfer.serialise(function)
         # compress files in function_params
         if function_params:
@@ -91,9 +101,8 @@ class AnalyticsClient(object):
         analysis = self._run_python_function_base(func, function_params, data, user_tasks,
                                                   walltime, paths, env, output_dir, **kwargs)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
-        jro.checkForUpdate(check_period, monotonic())
+        jro.checkForUpdate(check_period, start_time)
         return jro
-
 
     def _run_python_function_base(self, *args, **kwargs):
         '''Run the function using celery.
@@ -103,16 +112,52 @@ class AnalyticsClient(object):
         '''
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
                                    args=args, kwargs=kwargs)
-        return analysis_p.get(disable_sync_subtasks=False)
+        last_error = None
+        for attempt in range(50):
+            try:
+                while not analysis_p.ready():
+                    sleep(1.0)
+                return analysis_p.get(disable_sync_subtasks=False)
+            except ValueError as e:
+                raise e
+            except TimeoutError as e:
+                last_error = str(e)
+                print("error - AnalyticsClient._run_python_function_base()", str(type(e)), last_error)
+                sleep(0.5)
+                continue
+            except Exception as e:
+                last_error = str(e)
+                print("error u - AnalyticsClient._run_python_function_base()", str(type(e)), last_error)
+                sleep(0.5)
+                continue
 
-    def _get_update(self, action, item_id, paths=None, env=None):
+    def _get_update(self, action, item_id, paths=None, env=None, max_retries=50):
         '''Remotely invoke the `analytics_worker.get_update()` method.'''
         # Minimal check: item ID must be an int
         if not isinstance(item_id, int):
             raise ValueError('Invalid job or result id: {}'.format(item_id))
         data_p = app.send_task('datacube.analytics.analytics_worker.get_update',
                                args=(action, item_id, paths, env))
-        return data_p.get(disable_sync_subtasks=False)
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                while not data_p.ready():
+                    sleep(1.0)
+                return data_p.get(disable_sync_subtasks=False)
+                # return data_p.get(disable_sync_subtasks=False)
+            except TimeoutError as e:
+                last_error = str(e)
+                print("error - AnalyticsClient._get_update()", str(type(e)), last_error)
+                sleep(0.5)
+                continue
+            except Exception as e:
+                last_error = str(e)
+                print("error u - AnalyticsClient._get_update()", str(type(e)), last_error)
+                sleep(0.5)
+                continue
+
+        # Exceeded max retries
+        raise RuntimeError('AnalyticsClient._get_update', 'exceeded max retries', last_error)
 
     def get_status(self, item, paths=None, env=None):
         '''Return the status of a job or result.'''

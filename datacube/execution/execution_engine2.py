@@ -6,6 +6,7 @@ from xarray import Dataset, DataArray
 import boto3
 from boto3.s3.transfer import TransferConfig
 from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolution
+from dill import loads
 
 from datacube import Datacube
 from datacube.engine_common.store_handler import ResultTypes, ResultMetadata, JobStatuses
@@ -110,6 +111,11 @@ class ExecutionEngineV2(Worker):
                           result_id, self._result_bucket, s3_key, result_meta.descriptor)
 
     def pre_process(self, job):
+        if self._use_s3:
+            s3io = S3IO(self._use_s3, self._output_dir)
+            job['function_params'] = loads(s3io.get_bytes(self._result_bucket, 'param/' + job['function_params']))
+        else:
+            job['function_params'] = self._store.get_function_params(job['function_params'])
         if 'function_params' not in job or job['function_params'] is None:
             job['function_params'] = {}
         if 'user_task' not in job or job['user_task'] is None:

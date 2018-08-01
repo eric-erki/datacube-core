@@ -41,7 +41,14 @@ def celery_app(store_config=None):
         task_serializer='pickle',
         result_serializer='pickle',
         accept_content=['pickle'],
-        worker_prefetch_multiplier=1)
+        worker_prefetch_multiplier=1,
+        broker_pool_limit=100,
+        broker_connection_retry=True,
+        broker_connection_timeout=4,
+        broker_transport_options={'socket_keepalive': True, 'retry_on_timeout': True,
+                                  'socket_connect_timeout': 10, 'socket_timeout': 10},
+        redis_socket_connect_timeout=10,
+        redis_socket_timeout=10)
     return _app
 
 
@@ -130,8 +137,21 @@ def monitor_jobs(decomposed, subjob_tasks, walltime, paths=None, env=None, outpu
 @app.task
 def get_update(action, item_id, paths=None, env=None):
     '''Return an update on a job or result.'''
-    update_engine = UpdateEngineV2(paths, env)
-    if not update_engine:
-        raise RuntimeError('Update engine must be initialised by calling `initialise_engines`')
-    result = update_engine.execute(action, item_id)
-    return result
+    last_error = None
+    for attempt in range(10):
+        try:
+            update_engine = UpdateEngineV2(paths, env)
+            if not update_engine:
+                raise RuntimeError('Update engine must be initialised by calling `initialise_engines`')
+            result = update_engine.execute(action, item_id)
+            return result
+        except TimeoutError as e:
+            last_error = str(e)
+            print("error - AnalyticsWorker.get_update()", str(type(e)), last_error)
+            continue
+        except Exception as e:
+            last_error = str(e)
+            print("error u - AnalyticsWorker.get_update()", str(type(e)), last_error)
+            continue
+    # Exceeded max retries
+    raise RuntimeError('AnalyticsWorker.get_update', 'exceeded max retries', last_error)

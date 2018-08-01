@@ -91,10 +91,11 @@ class S3IO(object):
         """
         if not self.enable_s3:
             return None
+        config = botocore.config.Config(max_pool_connections=50)
         if new_session is True:
-            s3 = boto3.session.Session().resource('s3')
+            s3 = boto3.session.Session().resource('s3', config=config)
         else:
-            s3 = boto3.resource('s3')
+            s3 = boto3.resource('s3', config=config)
         return s3
 
     def s3_bucket(self, s3_bucket, new_session=False):
@@ -266,8 +267,22 @@ class S3IO(object):
         # data = cctx.compress(data)
 
         if self.enable_s3:
-            s3 = self.s3_resource(new_session)
-            s3.meta.client.put_object(Bucket=s3_bucket, Key=s3_key, Body=io.BytesIO(data))
+            last_error = None
+            for attempt in range(10):
+                try:
+                    s3 = self.s3_resource(new_session)
+                    s3.meta.client.put_object(Bucket=s3_bucket, Key=s3_key, Body=io.BytesIO(data))
+                    return
+                except botocore.vendored.requests.packages.urllib3.exceptions.ReadTimeoutError as e:
+                    last_error = str(e)
+                    print("error - s3io.put_bytes()", str(type(e)), last_error)
+                    continue
+                except Exception as e:  # pylint: disable=broad-except
+                    last_error = str(e)
+                    print("error u - s3io.put_bytes()", str(type(e)), last_error)
+                    continue
+            # Exceeded max retries
+            raise RuntimeError('s3io.put_bytes', 'exceeded max retries', last_error)
         else:
             directory = self.file_path + "/" + str(s3_bucket)
             try:
@@ -470,21 +485,29 @@ class S3IO(object):
                 s3.download_fileobj(s3_bucket, s3_key, byte_buffer, Config=transfer_config)
                 return byte_buffer.getvalue()
             else:
-                while True:
-                    s3 = self.s3_resource(new_session)
-                    b = s3.Bucket(s3_bucket)
-                    o = b.Object(s3_key)
-
-                    #self.get_byte_range_mp(s3_bucket, s3_key, s3_start, s3_end, block_size, new_session)
+                last_error = None
+                for attempt in range(10):
                     try:
+                        s3 = self.s3_resource(new_session)
+                        b = s3.Bucket(s3_bucket)
+                        o = b.Object(s3_key)
+
+                        #self.get_byte_range_mp(s3_bucket, s3_key, s3_start, s3_end, block_size, new_session)
                         #s3_end = o.get()['ContentLength']
                         #d = self.get_byte_range_mp(s3_bucket, s3_key, 0, s3_end, 10*1024*1024, new_session)
                         d = o.get()['Body'].read()
                         # d = np.frombuffer(d, dtype=np.uint8, count=-1, offset=0)
                         return d
-                    except botocore.exceptions.ClientError as e:
-                        break
-                    break
+                    except botocore.vendored.requests.packages.urllib3.exceptions.ReadTimeoutError as e:
+                        last_error = str(e)
+                        print("error - s3io.get_bytes()", str(type(e)), last_error)
+                        continue
+                    except Exception as e:  # pylint: disable=broad-except
+                        last_error = str(e)
+                        print("error u - s3io.get_bytes()", str(type(e)), last_error)
+                        continue
+                # Exceeded max retries
+                raise RuntimeError('s3io.get_bytes', 'exceeded max retries', last_error)
         else:
             directory = self.file_path + "/" + str(s3_bucket)
             if not (os.path.exists(directory) and os.path.exists(directory + "/" + str(s3_key))):

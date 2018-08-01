@@ -5,12 +5,15 @@ import time
 from math import ceil
 from pprint import pformat
 from six.moves import zip
+from hashlib import sha512
+from dill import dumps
 
 from .worker import Worker
 from datacube.engine_common.store_handler import FunctionTypes
 from datacube.engine_common.store_workers import WorkerTypes
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
+from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 
 class AnalyticsEngineV2(Worker):
@@ -34,6 +37,8 @@ class AnalyticsEngineV2(Worker):
 
     def __init__(self, name, paths=None, env=None, output_dir=None):
         super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, paths, env, output_dir)
+        self._use_s3 = self._ee_config['use_s3']
+        self._result_bucket = self._ee_config['result_bucket']
 
     def analyse(self, function, function_params, data, user_tasks, *args, **kwargs):
         '''user - job submit
@@ -89,8 +94,15 @@ class AnalyticsEngineV2(Worker):
         their ids as required.
         '''
         # Prepare the sub-jobs and base job info
-        jobs = self._create_jobs(function, data, function_params, storage_params, user_tasks)
+        function_params_id = sha512(dumps(function_params)).hexdigest()
+        # todo: reserve key in redis here
+        jobs = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
+        if self._use_s3:
+            s3io = S3IO(True)
+            s3io.put_bytes(self._result_bucket, 'param/' + function_params_id, dumps(function_params))
+        else:
+            self._store.set_function_params(function_params_id, function_params)
         return {
             'base': base,
             'jobs': jobs

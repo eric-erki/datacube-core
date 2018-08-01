@@ -15,9 +15,11 @@ import json
 import logging
 import os
 import re
+from time import sleep
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.engine.url import URL as EngineUrl
 
 import datacube
@@ -78,28 +80,45 @@ class PostgresDb(object):
 
     @classmethod
     def create(cls, hostname, database, username=None, password=None, port=None,
-               application_name=None, validate=True, pool_timeout=60):
-        engine = cls._create_engine(
-            EngineUrl(
-                'postgresql',
-                host=hostname, database=database, port=port,
-                username=username, password=password,
-            ),
-            application_name=application_name,
-            pool_timeout=pool_timeout)
-        if validate:
-            if not _core.database_exists(engine):
-                raise IndexSetupError('\n\nNo DB schema exists. Have you run init?\n\t{init_command}'.format(
-                    init_command='datacube system init'
-                ))
+               application_name=None, validate=True, pool_timeout=60, max_retries=50):
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                engine = cls._create_engine(
+                    EngineUrl(
+                        'postgresql',
+                        host=hostname, database=database, port=port,
+                        username=username, password=password,
+                    ),
+                    application_name=application_name,
+                    pool_timeout=pool_timeout)
+                if validate:
+                    if not _core.database_exists(engine):
+                        raise IndexSetupError('\n\nNo DB schema exists. Have you run init?\n\t{init_command}'.format(
+                            init_command='datacube system init'
+                        ))
 
-            if not _core.schema_is_latest(engine):
-                raise IndexSetupError(
-                    '\n\nDB schema is out of date. '
-                    'An administrator must run init:\n\t{init_command}'.format(
-                        init_command='datacube -v system init'
-                    ))
-        return PostgresDb(engine)
+                    if not _core.schema_is_latest(engine):
+                        raise IndexSetupError(
+                            '\n\nDB schema is out of date. '
+                            'An administrator must run init:\n\t{init_command}'.format(
+                                init_command='datacube -v system init'
+                            ))
+                return PostgresDb(engine)
+            except IndexSetupError as e:
+                raise e
+            except OperationalError as e:
+                last_error = str(e)
+                print("error - PostgresDb.create()", str(type(e)), last_error)
+                sleep(5)
+                continue
+            except Exception as e:  # pylint: disable=broad-except
+                last_error = str(e)
+                print("error u - PostgresDb.create()", str(type(e)), last_error)
+                sleep(5)
+                continue
+        # Exceeded max retries
+        raise RuntimeError('PostgresDb.create', 'exceeded max retries', last_error)
 
     @staticmethod
     def _create_engine(url, application_name=None, pool_timeout=60):
@@ -107,6 +126,7 @@ class PostgresDb(object):
             url,
             echo=False,
             echo_pool=False,
+            pool_pre_ping=True,
 
             # 'AUTOCOMMIT' here means READ-COMMITTED isolation level with autocommit on.
             # When a transaction is needed we will do an explicit begin/commit.
@@ -201,7 +221,7 @@ class PostgresDb(object):
         as some servers will aggressively close idle connections (eg. DEA's NCI servers). It also prevents the
         connection from being reused while borrowed.
         """
-        with self._engine.connect() as connection:
+        with self.give_me_a_connection() as connection:
             yield _api.PostgresDbAPI(connection)
             connection.close()
 
@@ -221,7 +241,7 @@ class PostgresDb(object):
 
         :rtype: PostgresDBAPI
         """
-        with self._engine.connect() as connection:
+        with self.give_me_a_connection() as connection:
             connection.execute(text('BEGIN'))
             try:
                 yield _api.PostgresDbAPI(connection)
@@ -232,8 +252,24 @@ class PostgresDb(object):
             finally:
                 connection.close()
 
-    def give_me_a_connection(self):
-        return self._engine.connect()
+    def give_me_a_connection(self, max_retries=50):
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return self._engine.connect()
+            except OperationalError as e:
+                last_error = str(e)
+                print("error - PostgresDb.give_me_a_connection()", str(type(e)), last_error)
+                sleep(5)
+                continue
+            except Exception as e:  # pylint: disable=broad-except
+                last_error = str(e)
+                print("error u - PostgresDb.give_me_a_connection()", str(type(e)), last_error)
+                sleep(5)
+                continue
+
+        # Exceeded max retries
+        raise RuntimeError('PostgresDb.give_me_a_connection', 'exceeded max retries', last_error)
 
     def get_dataset_fields(self, search_fields_definition):
         return _api.get_dataset_fields(search_fields_definition)
