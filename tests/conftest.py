@@ -46,8 +46,23 @@ def sample_document_files(data_folder):
              ('single_doc.yaml', 1),
              ('sample.json', 1)]
 
-    return [(str(os.path.join(data_folder, f)), n)
-            for f, n in files]
+    files = [(str(os.path.join(data_folder, f)), num_docs)
+             for f, num_docs in files]
+    from moto import mock_s3
+    import boto3
+    with mock_s3():
+        s3 = boto3.resource('s3', region_name='us-east-1')
+        s3.create_bucket(Bucket='mybucket')
+        for fname, ndocs in files:
+            full_path = os.path.join(data_folder, fname)
+            s3.Bucket('mybucket').upload_file(full_path, fname)
+
+        files += [(f's3://mybucket/{fname}', num)
+                  for f, num in files]
+
+        # files += [(f'http://localhost:8000/{fname}', num)
+        #           for f, num in files]
+        yield files
 
 
 @pytest.fixture

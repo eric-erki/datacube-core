@@ -5,29 +5,29 @@ Test date sequence generation functions as used by statistics apps
 """
 import os
 import string
-
 from types import SimpleNamespace
+
+import numpy as np
 import pytest
 import rasterio
+import toolz
+import xarray as xr
 from dateutil.parser import parse
 from hypothesis import given
 from hypothesis.strategies import integers, text
 from pandas import to_datetime
-import pathlib
-import toolz
-import xarray as xr
-import numpy as np
 
 from datacube.helpers import write_geotiff
-from datacube.utils import uri_to_local_path, clamp, gen_password, write_user_secret_file, slurp, SimpleDocNav
-from datacube.utils import without_lineage_sources, map_with_lookahead, read_documents, sorted_items
-from datacube.utils import mk_part_uri, get_part_from_uri, InvalidDocException
+from datacube.model import MetadataType
+from datacube.model.utils import xr_apply, traverse_datasets, flatten_datasets, dedup_lineage
+from datacube.testutils import mk_sample_product, make_graph_abcde, gen_dataset_test_dag, dataset_maker
+from datacube.utils import clamp, gen_password, write_user_secret_file, slurp, read_documents, sorted_items
 from datacube.utils.changes import check_doc_unchanged, get_doc_changes, MISSING, DocumentMismatchError
 from datacube.utils.dates import date_sequence
-from datacube.model.utils import xr_apply, traverse_datasets, flatten_datasets, dedup_lineage
-from datacube.model import MetadataType
-
-from datacube.testutils import mk_sample_product, make_graph_abcde, gen_dataset_test_dag, dataset_maker
+from datacube.utils.documents import InvalidDocException, SimpleDocNav
+from datacube.utils.generic import map_with_lookahead
+from datacube.utils.uris import uri_to_local_path, mk_part_uri, get_part_from_uri, as_url, is_url, \
+    without_lineage_sources
 
 
 def test_stats_dates():
@@ -242,10 +242,10 @@ def test_without_lineage_sources():
 
 def test_map_with_lookahead():
     def if_one(x):
-        return 'one'+str(x)
+        return 'one' + str(x)
 
     def if_many(x):
-        return 'many'+str(x)
+        return 'many' + str(x)
 
     assert list(map_with_lookahead(iter([]), if_one, if_many)) == []
     assert list(map_with_lookahead(iter([1]), if_one, if_many)) == [if_one(1)]
@@ -267,29 +267,29 @@ def test_part_uri():
 
 
 def test_read_documents(sample_document_files):
-    for filename, ndocs in sample_document_files:
-        all_docs = list(read_documents(filename))
-        assert len(all_docs) == ndocs
+    for filepath, num_docs in sample_document_files:
+        all_docs = list(read_documents(filepath))
+        assert len(all_docs) == num_docs
 
         for path, doc in all_docs:
             assert isinstance(doc, dict)
-            assert isinstance(path, pathlib.Path)
+            # assert isinstance(path, pathlib.Path)
 
-        assert set(str(f) for f, _ in all_docs) == set([filename])
+        assert set(str(f) for f, _ in all_docs) == set([filepath])
 
-    for filename, ndocs in sample_document_files:
-        all_docs = list(read_documents(filename, uri=True))
-        assert len(all_docs) == ndocs
+    for filepath, num_docs in sample_document_files:
+        all_docs = list(read_documents(filepath, uri=True))
+        assert len(all_docs) == num_docs
 
         for uri, doc in all_docs:
             assert isinstance(doc, dict)
             assert isinstance(uri, str)
 
-        p = pathlib.Path(filename)
-        if ndocs > 1:
-            expect_uris = [p.as_uri() + '#part={}'.format(i) for i in range(ndocs)]
+        url = as_url(filepath)
+        if num_docs > 1:
+            expect_uris = [as_url(url) + '#part={}'.format(i) for i in range(num_docs)]
         else:
-            expect_uris = [p.as_uri()]
+            expect_uris = [as_url(url)]
 
         assert [f for f, _ in all_docs] == expect_uris
 
@@ -310,7 +310,7 @@ def test_xr_apply():
     dst = xr_apply(src, lambda idx, _, v: idx[0] + v, with_numeric_index=True)
     assert dst.dtype.name == 'uint8'
     assert dst.shape == src.shape
-    assert dst.values.tolist() == [0+1, 1+2, 2+3]
+    assert dst.values.tolist() == [0 + 1, 1 + 2, 2 + 3]
 
 
 def test_sorted_items():
@@ -542,3 +542,19 @@ def test_dedup():
 
     with pytest.raises(InvalidDocException, match=r'Inconsistent lineage .*'):
         dedup_lineage(ds0)
+
+
+@pytest.mark.parametrize("test_input,expected", [
+    ("/foo/bar/file.txt", False),
+    ("file:///foo/bar/file.txt", True),
+    ("test.bar", False),
+    ("s3://mybucket/objname.tiff", True),
+    ("ftp://host.name/filename.txt", True),
+    ("https://host.name.com/path/file.txt", True),
+    ("http://host.name.com/path/file.txt", True),
+    ("sftp://user:pass@host.name.com/path/file.txt", True),
+    ("file+gzip://host.name.com/path/file.txt", True),
+    ("bongo:host.name.com/path/file.txt", False),
+])
+def test_is_url(test_input, expected):
+    assert is_url(test_input) == expected
