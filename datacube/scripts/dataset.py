@@ -84,8 +84,7 @@ def load_datasets_for_update(doc_stream, index):
         dataset, existing, error_msg = mk_dataset(doc, uri)
 
         if dataset is None:
-            _LOG.error("Failure while processing: %s\n" +
-                       " > Reason: %s", uri, error_msg)
+            _LOG.error("Failure while processing: %s\n > Reason: %s", uri, error_msg)
         else:
             is_consistent, reason = check_dataset_consistent(dataset)
             if is_consistent:

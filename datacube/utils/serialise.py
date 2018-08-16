@@ -5,8 +5,6 @@ Serialise function used in YAML output
 from __future__ import absolute_import, division, print_function
 
 import math
-from _pydecimal import Decimal
-
 from collections import OrderedDict
 from datetime import datetime, date
 from decimal import Decimal
@@ -14,6 +12,7 @@ from uuid import UUID
 
 import numpy
 import yaml
+
 from datacube.model import Range
 from datacube.utils.documents import transform_object_tree
 

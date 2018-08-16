@@ -3,7 +3,7 @@
 ###
 import gzip
 import json
-from collections import OrderedDict
+from collections import OrderedDict, Mapping
 from itertools import chain
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,15 +32,11 @@ def _open_from_s3(url):
     return obj['Body']
 
 
-#    raw_string = obj['Body'].read().decode('utf8')
-#    return raw_string
-
-
 def _open_with_urllib(url):
     return urlopen(url)
 
 
-PROTOCOL_OPENERS = {
+_PROTOCOL_OPENERS = {
     's3': _open_from_s3,
     'ftp': _open_with_urllib,
     'http': _open_with_urllib,
@@ -59,21 +55,18 @@ def load_from_json(handle):
 
 
 def load_from_netcdf(path):
-    # if compressed:
-    #     raise InvalidDocException("Can't process gziped netcdf files")
-
     for doc in read_strings_from_netcdf(path, variable='dataset'):
         yield yaml.load(doc, Loader=NoDatesSafeLoader)
 
 
-procs = {
+_PARSERS = {
     '.yaml': load_from_yaml,
     '.yml': load_from_yaml,
     '.json': load_from_json,
 }
 
 
-def find_loader(path):
+def load_documents(path):
     path = str(path)
     if str(path)[-3:] == '.nc':
         yield from load_from_netcdf(path)
@@ -83,14 +76,14 @@ def find_loader(path):
         scheme = urlparse(url).scheme
         compressed = url[-3:] == '.gz'
 
-        with PROTOCOL_OPENERS[scheme](url) as fh:
+        with _PROTOCOL_OPENERS[scheme](url) as fh:
             if compressed:
                 fh = gzip.open(fh)
                 path = path[:-3]
 
             suffix = Path(path).suffix
 
-            parser = procs[suffix]
+            parser = _PARSERS[suffix]
 
             yield from parser(fh)
 
@@ -115,7 +108,7 @@ def read_documents(*paths, uri=False):
     def process_file(path):
         url = as_url(path)
 
-        docs = find_loader(path)
+        docs = load_documents(path)
 
         if not uri:
             for doc in docs:
@@ -144,7 +137,7 @@ def read_documents(*paths, uri=False):
             raise InvalidDocException('Failed to load %s: %s' % (path, e))
 
 
-def netcdf_extract_string(chars):
+def _netcdf_extract_string(chars):
     """
     Convert netcdf S|U chars to Unicode string.
     """
@@ -168,7 +161,7 @@ def read_strings_from_netcdf(path, variable):
     """
     with netCDF4.Dataset(str(path)) as ds:
         for chars in ds[variable]:
-            yield netcdf_extract_string(chars)
+            yield _netcdf_extract_string(chars)
 
 
 def validate_document(document, schema, schema_folder=None):
@@ -337,7 +330,7 @@ class SimpleDocNav(object):
     """
 
     def __init__(self, doc):
-        if not isinstance(doc, collections.Mapping):
+        if not isinstance(doc, Mapping):
             raise ValueError("")
 
         self._doc = doc
