@@ -8,18 +8,21 @@ import logging
 import math
 import warnings
 from collections import namedtuple, OrderedDict, Sequence
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+import yaml
 from affine import Affine
 
 from datacube.compat import urlparse
-from datacube.utils import geometry, without_lineage_sources
-from datacube.utils import parse_time, cached_property, uri_to_local_path, schema_validated, DocReader
+from datacube.utils import geometry, without_lineage_sources, parse_time, cached_property, uri_to_local_path, \
+    schema_validated, DocReader
 from datacube.utils.geometry import (CRS as _CRS,
                                      GeoBox as _GeoBox,
                                      Coordinate as _Coordinate,
                                      BoundingBox as _BoundingBox, intersects)
+from datacube.utils.serialise import SafeDatacubeDumper
 
 _LOG = logging.getLogger(__name__)
 
@@ -749,3 +752,23 @@ def metadata_from_doc(doc):
     from .fields import get_dataset_fields
     MetadataType.validate(doc)
     return MetadataType(doc, get_dataset_fields(doc))
+
+
+def _range_representer(dumper, data):
+    # type: (yaml.Dumper, Range) -> Node
+    begin, end = data
+
+    # pyyaml doesn't output timestamps in flow style as timestamps(?)
+    if isinstance(begin, datetime):
+        begin = begin.isoformat()
+    if isinstance(end, datetime):
+        end = end.isoformat()
+
+    return dumper.represent_mapping(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        (('begin', begin), ('end', end)),
+        flow_style=True
+    )
+
+
+SafeDatacubeDumper.add_representer(Range, _range_representer)

@@ -14,7 +14,8 @@ from .documents import InvalidDocException, SimpleDocNav, DocReader, is_supporte
 from .math import unsqueeze_data_array, iter_slices, unsqueeze_dataset
 from .py import cached_property, ignore_exceptions_if, import_function
 from .serialise import jsonify_document
-from .uris import is_url, uri_to_local_path, get_part_from_uri, mk_part_uri
+from .uris import is_url, uri_to_local_path, get_part_from_uri, mk_part_uri, without_lineage_sources
+from .math import data_resolution_and_offset
 
 _LOG = logging.getLogger(__name__)
 
