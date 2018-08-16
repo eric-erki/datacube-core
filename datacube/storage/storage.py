@@ -21,7 +21,8 @@ from datacube.config import OPTIONS
 from datacube.drivers.datasource import DataSource
 from datacube.model import Dataset
 from datacube.storage import netcdf_writer
-from datacube.utils import clamp, datetime_to_seconds_since_1970, DatacubeException, ignore_exceptions_if
+from datacube.utils import datetime_to_seconds_since_1970, DatacubeException, ignore_exceptions_if
+from datacube.utils.math import clamp
 from datacube.utils import geometry
 from datacube.utils import is_url, uri_to_local_path, get_part_from_uri
 

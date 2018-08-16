@@ -15,11 +15,11 @@ from affine import Affine
 
 from datacube.compat import urlparse
 from datacube.utils import geometry, without_lineage_sources
-from datacube.utils import parse_time, cached_property, uri_to_local_path, intersects, schema_validated, DocReader
+from datacube.utils import parse_time, cached_property, uri_to_local_path, schema_validated, DocReader
 from datacube.utils.geometry import (CRS as _CRS,
                                      GeoBox as _GeoBox,
                                      Coordinate as _Coordinate,
-                                     BoundingBox as _BoundingBox)
+                                     BoundingBox as _BoundingBox, intersects)
 
 _LOG = logging.getLogger(__name__)
 

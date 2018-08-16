@@ -21,7 +21,9 @@ from datacube.helpers import write_geotiff
 from datacube.model import MetadataType
 from datacube.model.utils import xr_apply, traverse_datasets, flatten_datasets, dedup_lineage
 from datacube.testutils import mk_sample_product, make_graph_abcde, gen_dataset_test_dag, dataset_maker
-from datacube.utils import clamp, gen_password, write_user_secret_file, slurp, read_documents, sorted_items
+from datacube.utils import gen_password, write_user_secret_file, slurp, read_documents
+from datacube.utils.math import clamp
+from datacube.utils.py import sorted_items
 from datacube.utils.changes import check_doc_unchanged, get_doc_changes, MISSING, DocumentMismatchError
 from datacube.utils.dates import date_sequence
 from datacube.utils.documents import InvalidDocException, SimpleDocNav
