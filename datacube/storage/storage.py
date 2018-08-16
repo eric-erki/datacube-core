@@ -512,7 +512,7 @@ def _url2rasterio(url_str, fmt, layer):
     url = urlparse(url_str)
     assert url.scheme, "Expecting URL with scheme here"
 
-    # if format is NETCDF of HDF need to pass NETCDF:path:band as filename to rasterio/GDAL
+    # if format is NETCDF or HDF need to pass NETCDF:path:band as filename to rasterio/GDAL
     for nasty_format in ('netcdf', 'hdf'):
         if nasty_format in fmt.lower():
             if url.scheme != 'file':
@@ -546,10 +546,12 @@ def _choose_location(dataset):
 
 
 def measurement_paths(dataset):
-    '''Returns a dictionary mapping from band name to url pointing to band storage
+    """
+    Returns a dictionary mapping from band name to url pointing to band storage
     resource.
+
     :return: {str: str} Band Name => URL
-    '''
+    """
     base = _choose_location(dataset)
     return dict((k, _resolve_url(base, m.get('path', '')))
                 for k, m in dataset.measurements.items())

@@ -65,8 +65,7 @@ def resolve_doc_files(paths, on_error):
 
 
 def path_doc_stream(files, on_error, uri=True, raw=False):
-    maybe_wrap = {True: lambda x: x,
-                  False: SimpleDocNav}[raw]
+    maybe_wrap = lambda x: x if raw else SimpleDocNav
 
     for fname in files:
         try:
