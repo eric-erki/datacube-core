@@ -17,7 +17,6 @@ try:
     import SharedArray as sa
 except ImportError:
     pass
-from affine import Affine
 from dask import array as da
 
 try:
@@ -30,7 +29,6 @@ from datacube.config import LocalConfig
 from datacube.compat import string_types
 from datacube.storage.storage import reproject_and_fuse
 from datacube.utils import geometry
-from datacube.utils.math import data_resolution_and_offset
 from datacube.utils.geometry import intersects
 from .query import Query, query_group_by, query_geopolygon
 from ..index import index_connect
@@ -83,6 +81,7 @@ class Datacube(object):
         :return: Datacube object
 
         """
+
         def normalise_config(config):
             if config is None:
                 return LocalConfig.find(env=env)
@@ -105,7 +104,7 @@ class Datacube(object):
         :param with_pandas: return the list as a Pandas DataFrame, otherwise as a list of dict.
         :rtype: pandas.DataFrame or list(dict)
         """
-        rows = [dataset_type_to_row(dataset_type) for dataset_type in self.index.products.get_all()]
+        rows = [product.to_dict() for product in self.index.products.get_all()]
         if not with_pandas:
             return rows
 
@@ -584,6 +583,7 @@ def apply_aliases(data, product, measurements):
     return data.rename({product.canonical_measurement(provided_name): provided_name
                         for provided_name in measurements})
 
+
 def output_geobox(like=None, output_crs=None, resolution=None, align=None,
                   grid_spec=None, datasets=None, **query):
     """ Configure output geobox from user provided output specs. """
@@ -663,23 +663,6 @@ def set_resampling_method(measurements, resampling=None):
     measurements = OrderedDict((name, make_resampled_measurement(measurement))
                                for name, measurement in measurements.items())
     return measurements
-
-
-def dataset_type_to_row(dt):
-    row = {
-        'id': dt.id,
-        'name': dt.name,
-        'description': dt.definition['description'],
-    }
-    row.update(dt.fields)
-    if dt.grid_spec is not None:
-        row.update({
-            'crs': str(dt.grid_spec.crs),
-            'spatial_dimensions': dt.grid_spec.dimensions,
-            'tile_size': dt.grid_spec.tile_size,
-            'resolution': dt.grid_spec.resolution,
-        })
-    return row
 
 
 def _chunk_geobox(geobox, chunk_size):

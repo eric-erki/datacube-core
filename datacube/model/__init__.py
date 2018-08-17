@@ -510,6 +510,27 @@ class DatasetType(object):
     def dataset_reader(self, dataset_doc):
         return self.metadata_type.dataset_reader(dataset_doc)
 
+    def to_dict(self):
+        """
+        Convert to a dictionary representation of the available fields
+
+        :rtype: dict
+        """
+        row = {
+            'id': self.id,
+            'name': self.name,
+            'description': self.definition['description'],
+        }
+        row.update(self.fields)
+        if self.grid_spec is not None:
+            row.update({
+                'crs': str(self.grid_spec.crs),
+                'spatial_dimensions': self.grid_spec.dimensions,
+                'tile_size': self.grid_spec.tile_size,
+                'resolution': self.grid_spec.resolution,
+            })
+        return row
+
     def __str__(self):
         return "DatasetType(name={name!r}, id_={id!r})".format(id=self.id, name=self.name)
 
