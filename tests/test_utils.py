@@ -5,6 +5,7 @@ Test date sequence generation functions as used by statistics apps
 """
 import os
 import string
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -21,13 +22,13 @@ from datacube.helpers import write_geotiff
 from datacube.model import MetadataType
 from datacube.model.utils import xr_apply, traverse_datasets, flatten_datasets, dedup_lineage
 from datacube.testutils import mk_sample_product, make_graph_abcde, gen_dataset_test_dag, dataset_maker
-from datacube.utils import gen_password, write_user_secret_file, slurp, read_documents
-from datacube.utils.math import clamp
-from datacube.utils.py import sorted_items
+from datacube.utils import gen_password, write_user_secret_file, slurp, read_documents, InvalidDocException, \
+    SimpleDocNav
 from datacube.utils.changes import check_doc_unchanged, get_doc_changes, MISSING, DocumentMismatchError
 from datacube.utils.dates import date_sequence
-from datacube.utils import InvalidDocException, SimpleDocNav
 from datacube.utils.generic import map_with_lookahead
+from datacube.utils.math import clamp
+from datacube.utils.py import sorted_items
 from datacube.utils.uris import uri_to_local_path, mk_part_uri, get_part_from_uri, as_url, is_url, \
     without_lineage_sources
 
@@ -268,17 +269,39 @@ def test_part_uri():
     assert get_part_from_uri('file:///f.txt#part=111') == 111
 
 
-def test_read_documents(sample_document_files):
+def test_read_docs_from_file(sample_document_files):
+    _read_documents_impl(sample_document_files)
+
+
+def test_read_docs_from_s3(sample_document_files):
+    moto = pytest.importorskip('moto')
+    boto3 = pytest.importorskip('boto3')
+
+    with moto.mock_s3():
+        s3 = boto3.resource('s3', region_name='us-east-1')
+        s3.create_bucket(Bucket='mybucket')
+        for abs_fname, ndocs in sample_document_files:
+            fname = Path(abs_fname).name
+            s3.Bucket('mybucket').upload_file(abs_fname, fname)
+
+        sample_document_files = [('s3://mybucket/' + fname, num)
+                                 for f, num in sample_document_files]
+
+        _read_documents_impl(sample_document_files)
+
+
+def _read_documents_impl(sample_document_files):
+    # Test case for returning native points to documents, may be pathlib.Path or URI
     for filepath, num_docs in sample_document_files:
         all_docs = list(read_documents(filepath))
         assert len(all_docs) == num_docs
 
         for path, doc in all_docs:
             assert isinstance(doc, dict)
-            # assert isinstance(path, pathlib.Path)
 
         assert set(str(f) for f, _ in all_docs) == set([filepath])
 
+    # Test case for returning URIs pointing to documents
     for filepath, num_docs in sample_document_files:
         all_docs = list(read_documents(filepath, uri=True))
         assert len(all_docs) == num_docs
