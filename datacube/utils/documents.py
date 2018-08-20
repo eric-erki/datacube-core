@@ -137,7 +137,7 @@ def read_documents(*paths, uri=False):
             raise InvalidDocException('Failed to load %s: %s' % (path, e))
 
 
-def _netcdf_extract_string(chars):
+def netcdf_extract_string(chars):
     """
     Convert netcdf S|U chars to Unicode string.
     """
@@ -161,7 +161,7 @@ def read_strings_from_netcdf(path, variable):
     """
     with netCDF4.Dataset(str(path)) as ds:
         for chars in ds[variable]:
-            yield _netcdf_extract_string(chars)
+            yield netcdf_extract_string(chars)
 
 
 def validate_document(document, schema, schema_folder=None):

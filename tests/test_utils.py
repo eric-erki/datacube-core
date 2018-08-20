@@ -26,7 +26,7 @@ from datacube.utils.math import clamp
 from datacube.utils.py import sorted_items
 from datacube.utils.changes import check_doc_unchanged, get_doc_changes, MISSING, DocumentMismatchError
 from datacube.utils.dates import date_sequence
-from datacube.utils.documents import InvalidDocException, SimpleDocNav
+from datacube.utils import InvalidDocException, SimpleDocNav
 from datacube.utils.generic import map_with_lookahead
 from datacube.utils.uris import uri_to_local_path, mk_part_uri, get_part_from_uri, as_url, is_url, \
     without_lineage_sources

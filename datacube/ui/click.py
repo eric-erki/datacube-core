@@ -77,7 +77,7 @@ class ClickHandler(logging.Handler):
         try:
             msg = self.format(record)
             click.echo(msg, err=True)
-        except (KeyboardInterrupt, SystemExit): # pylint: disable=try-except-raise
+        except (KeyboardInterrupt, SystemExit):  # noqa
             raise
         except:  # pylint: disable=bare-except
             self.handleError(record)

@@ -85,7 +85,7 @@ def as_url(maybe_uri):
     if is_url(maybe_uri):
         return maybe_uri
     else:
-        return pathlib.Path(maybe_uri).as_uri()
+        return pathlib.Path(maybe_uri).absolute().as_uri()
 
 
 def without_lineage_sources(doc, spec, inplace=False):
