@@ -4,6 +4,7 @@
 import gzip
 import json
 from collections import OrderedDict, Mapping
+from contextlib import contextmanager
 from itertools import chain
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +21,7 @@ from datacube.utils.generic import map_with_lookahead
 from datacube.utils.uris import mk_part_uri, as_url
 
 
+@contextmanager
 def _open_from_s3(url):
     o = urlparse(url)
     if o.scheme != 's3':
@@ -28,8 +30,11 @@ def _open_from_s3(url):
     import boto3
     s3 = boto3.resource("s3")
 
-    obj = s3.Object(o.netloc, o.path).get(ResponseCacheControl='no-cache')
-    return obj['Body']
+    bucket = o.netloc
+    key = o.path[1:]
+    obj = s3.Object(bucket, key).get(ResponseCacheControl='no-cache')
+    yield obj['Body']
+    print('closed ' + repr(obj))
 
 
 def _open_with_urllib(url):
@@ -66,16 +71,15 @@ _PARSERS = {
 }
 
 
-def load_documents(path):
+def load_document(path):
     path = str(path)
-    if str(path)[-3:] == '.nc':
+    url = as_url(path)
+    scheme = urlparse(url).scheme
+    compressed = url[-3:] == '.gz'
+
+    if scheme == 'file' and path[-3:] == '.nc':
         yield from load_from_netcdf(path)
     else:
-
-        url = as_url(path)
-        scheme = urlparse(url).scheme
-        compressed = url[-3:] == '.gz'
-
         with _PROTOCOL_OPENERS[scheme](url) as fh:
             if compressed:
                 fh = gzip.open(fh)
@@ -108,7 +112,7 @@ def read_documents(*paths, uri=False):
     def process_file(path):
         url = as_url(path)
 
-        docs = load_documents(path)
+        docs = load_document(path)
 
         if not uri:
             for doc in docs:

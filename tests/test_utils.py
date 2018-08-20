@@ -274,20 +274,24 @@ def test_read_docs_from_file(sample_document_files):
 
 
 def test_read_docs_from_s3(sample_document_files):
-    moto = pytest.importorskip('moto')
     boto3 = pytest.importorskip('boto3')
+    moto = pytest.importorskip('moto')
 
     with moto.mock_s3():
         s3 = boto3.resource('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='mybucket')
+        bucket = s3.create_bucket(Bucket='mybucket')
+
+        mocked_s3_objs = []
         for abs_fname, ndocs in sample_document_files:
+            if abs_fname.endswith('gz') or abs_fname.endswith('nc'):
+                continue
+
             fname = Path(abs_fname).name
-            s3.Bucket('mybucket').upload_file(abs_fname, fname)
+            bucket.upload_file(abs_fname, fname)
 
-        sample_document_files = [('s3://mybucket/' + fname, num)
-                                 for f, num in sample_document_files]
+            mocked_s3_objs.append(('s3://mybucket/' + fname, ndocs))
 
-        _read_documents_impl(sample_document_files)
+        _read_documents_impl(mocked_s3_objs)
 
 
 def _read_documents_impl(sample_document_files):
