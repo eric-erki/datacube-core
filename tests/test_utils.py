@@ -4,7 +4,6 @@ Test utility functions from :module:`datacube.utils`
 
 """
 import os
-import shutil
 import string
 import sys
 from pathlib import Path
@@ -33,9 +32,6 @@ from datacube.utils.math import clamp
 from datacube.utils.py import sorted_items
 from datacube.utils.uris import uri_to_local_path, mk_part_uri, get_part_from_uri, as_url, is_url, \
     without_lineage_sources
-
-
-pytest_plugins = ['pytest_server_fixtures.http']
 
 
 def test_stats_dates():
@@ -276,20 +272,6 @@ def test_part_uri():
 
 def test_read_docs_from_local_path(sample_document_files):
     _read_documents_impl(sample_document_files)
-
-
-# @pytest.mark.skip
-def test_read_docs_from_http(sample_document_files, simple_http_test_server):
-    http_urls = []
-    for file, ndocs in sample_document_files:
-        if file.endswith('nc'):
-            continue
-
-        shutil.copy(file, simple_http_test_server.document_root)
-        http_urls.append(('http://127.0.0.1:%s/%s'
-                          % (simple_http_test_server.port, Path(file).name), ndocs))
-
-    _read_documents_impl(http_urls)
 
 
 def test_read_docs_from_file_uris(sample_document_files):
