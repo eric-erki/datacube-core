@@ -3,12 +3,14 @@
 ###
 import gzip
 import json
+import logging
 from collections import OrderedDict, Mapping
 from contextlib import contextmanager
 from itertools import chain
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
+import sys
 
 import jsonschema
 import netCDF4
@@ -18,7 +20,9 @@ import yaml
 from yaml import CSafeLoader as SafeLoader
 
 from datacube.utils.generic import map_with_lookahead
-from datacube.utils.uris import mk_part_uri, as_url
+from datacube.utils.uris import mk_part_uri, as_url, uri_to_local_path
+
+_LOG = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -33,8 +37,9 @@ def _open_from_s3(url):
     bucket = o.netloc
     key = o.path[1:]
     obj = s3.Object(bucket, key).get(ResponseCacheControl='no-cache')
+
     yield obj['Body']
-    print('closed ' + repr(obj))
+    _LOG.debug("Closing %s", obj)
 
 
 def _open_with_urllib(url):
@@ -49,10 +54,15 @@ _PROTOCOL_OPENERS = {
     'file': _open_with_urllib
 }
 
+# The JSON parser in Python 3.5 doesn't handle bytes, only str.
+# I can't work out how to get the boto3 code to do that, so for now
+# reading documents from s3 requires Python 3.6+.
+if sys.version_info >= (3, 6):
+    _PROTOCOL_OPENERS['s3'] = _open_from_s3
+
 
 def load_from_yaml(handle):
-    for parsed_doc in yaml.load_all(handle, Loader=NoDatesSafeLoader):
-        yield parsed_doc
+    yield from yaml.load_all(handle, Loader=NoDatesSafeLoader)
 
 
 def load_from_json(handle):
@@ -71,13 +81,26 @@ _PARSERS = {
 }
 
 
-def load_document(path):
+def load_documents(path):
+    """
+    Load document/s from the specified path.
+
+    At the moment can handle:
+
+     - JSON and YAML locally and remotely.
+     - Compressed JSON and YAML locally
+     - Data Cube Dataset Documents inside local NetCDF files.
+
+    :param path: path or URI to load documents from
+    :return: generator of dicts
+    """
     path = str(path)
     url = as_url(path)
     scheme = urlparse(url).scheme
     compressed = url[-3:] == '.gz'
 
     if scheme == 'file' and path[-3:] == '.nc':
+        path = uri_to_local_path(url)
         yield from load_from_netcdf(path)
     else:
         with _PROTOCOL_OPENERS[scheme](url) as fh:
@@ -102,22 +125,21 @@ def read_documents(*paths, uri=False):
     Data Cube we store JSONB in PostgreSQL and it will turn our dates
     into strings anyway.
 
-    :param uri: When True yield URIs instead Paths
-
-    :type paths: Path
+    :param uri: When True yield URIs instead of Paths
+    :param paths: input Paths or URIs
     :type uri: Bool
-    :rtype: tuple[(Path, dict)]
+    :rtype: tuple[(str, dict)]
     """
 
     def process_file(path):
-        url = as_url(path)
-
-        docs = load_document(path)
+        docs = load_documents(path)
 
         if not uri:
             for doc in docs:
                 yield path, doc
         else:
+            url = as_url(path)
+
             def add_uri_no_part(x):
                 idx, doc = x
                 return url, doc

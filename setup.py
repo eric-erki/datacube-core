@@ -15,6 +15,7 @@ tests_require = [
     'pytest-cov',
     'pytest-timeout',
     'moto',
+    'pytest-server-fixtures'
 ]
 
 extras_require = {
