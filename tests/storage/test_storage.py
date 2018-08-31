@@ -8,6 +8,10 @@ import numpy as np
 import pytest
 import rasterio.warp
 from affine import Affine, identity
+try:
+    from rasterio.warp import Resampling
+except ImportError:
+    from rasterio.warp import RESAMPLING as Resampling
 
 import datacube
 from datacube.drivers.datasource import DataSource
@@ -573,6 +577,40 @@ class TestRasterDataReading(object):
             dest1 = src.read()
             assert dest1.shape == (10, 10)
 
+    def test_read_from_geotiff_with_overviews(self, make_sample_geotiff_with_overviews, dst_nodata):
+        sample_geotiff_path, geobox, written_data = make_sample_geotiff_with_overviews(dst_nodata)
+
+        source = RasterFileDataSource(str(sample_geotiff_path), 1)
+
+        dest = np.zeros_like(written_data)
+        dst_transform = geobox.transform
+        dst_projection = geometry.CRS('EPSG:3577')
+        dst_resampling = Resampling.nearest
+
+        # Read exactly the hunk of data that we wrote
+        read_from_source(source, dest, dst_transform, dst_nodata, dst_projection, dst_resampling)
+
+        assert np.all(written_data == dest)
+
+        # Try reading from partially outside of our area
+        xoff = 50
+        offset_transform = dst_transform * Affine.translation(xoff, 0)
+        dest = np.zeros_like(written_data)
+
+        read_from_source(source, dest, offset_transform, dst_nodata, dst_projection, dst_resampling)
+        assert np.all(written_data[:, xoff:] == dest[:, :xoff])
+
+        # Try reading from complete outside of our area, should return nodata
+        xoff = 300
+        offset_transform = dst_transform * Affine.translation(xoff, 0)
+        dest = np.zeros_like(written_data)
+
+        read_from_source(source, dest, offset_transform, dst_nodata, dst_projection, dst_resampling)
+        if np.isnan(dst_nodata):
+            assert np.all(np.isnan(dest))
+        else:
+            assert np.all(dst_nodata == dest)
+
 
 @pytest.fixture
 def make_sample_netcdf(tmpdir):
@@ -620,6 +658,36 @@ def make_sample_geotiff(tmpdir):
 
         return sample_geotiff, geobox, sample_data
     return internal_make_sample_geotiff
+
+
+@pytest.fixture
+def make_sample_geotiff_with_overviews(tmpdir):
+    """ Make a sample geotiff, filled with random data, and create image overviews"""
+    def internal_make_sample_geotiff_overviews(nodata=-999):
+        sample_geotiff = str(tmpdir.mkdir('tiffs').join('sample_overview.tif'))
+
+        geobox = GeoBox(4000, 4000, affine=Affine(25.0, 0.0, 0, 0.0, -25.0, 0), crs=CRS('EPSG:3577'))
+        if np.isnan(nodata):
+            out_dtype = 'float64'
+            sample_data = 10000 * np.random.random_sample(size=geobox.shape)
+        else:
+            out_dtype = 'int16'
+            sample_data = np.random.randint(10000, size=geobox.shape, dtype=out_dtype)
+        rio_args = {
+            'height': geobox.height,
+            'width': geobox.width,
+            'count': 1,
+            'dtype': out_dtype,
+            'crs': 'EPSG:3577',
+            'transform': geobox.transform,
+            'nodata': nodata
+        }
+        with rasterio.open(sample_geotiff, 'w', driver='GTiff', **rio_args) as dst:
+            dst.write(sample_data, 1)
+            dst.build_overviews([2, 4, 8, 16], Resampling.average)
+
+        return sample_geotiff, geobox, sample_data
+    return internal_make_sample_geotiff_overviews
 
 
 _EXAMPLE_METADATA_TYPE = MetadataType(

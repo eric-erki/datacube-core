@@ -78,6 +78,45 @@ else:
     def _rasterio_transform(src):
         return src.affine
 
+def _source_has_overviews(src):
+    return len(src.overviews) > 0
+
+def _calculate_scaled_transform(src_projection, src_transform, src_shape,
+                                dst_projection, dst_transform, dst_shape):
+
+    # Convert destination (geobox) transform to src crs if needed.
+    # Allow rasterio to calculate resolution of geobox.
+    if dst_projection != src_projection:
+        # Create Geobox
+        geobox = geometry.GeoBox(dst_shape[0], dst_shape[1], dst_transform, dst_projection)
+        bb = geobox.extent.boundingbox
+        geobox_transform, _, _ = rasterio.warp.calculate_default_transform(
+            str(dst_projection),
+            str(src_projection),
+            geobox.width,
+            geobox.height,
+            left=bb.left,
+            right=bb.right,
+            top=bb.top,
+            bottom=bb.bottom)
+
+    # Calculate the output shape and corresponding transform
+    # Always round up to ensure we do not miss data
+    scale_affine = (~src_transform * geobox_transform)
+    scale_a = math.ceil(abs(geobox_transform.a / src_transform.a))
+    scale_e = math.ceil(abs(geobox_transform.e / src_transform.e))
+    scale = min(scale_a, scale_e)
+
+    out_shape = (math.ceil(src_shape[0] / scale), math.ceil(src_shape[1] / scale))
+    out_shape_affine = Affine(
+        (src_transform.a * scale),
+        0,
+        src_transform.c,
+        0,
+        (src_transform.e * scale),
+        src_transform.f)
+
+    return (out_shape, out_shape_affine)
 
 def _calc_offsets_impl(off, scale, src_size, dst_size):
     assert scale >= 1 - 1e-5
@@ -136,7 +175,7 @@ def _no_fractional_translate(affine, eps=0.01):
     return abs(affine.c % 1.0) < eps and abs(affine.f % 1.0) < eps
 
 
-def read_from_source(source, dest, dst_transform, dst_nodata, dst_projection, resampling):
+def read_from_source(source, dest, dst_transform, dst_nodata, dst_projection, resampling, allow_overviews):
     """
     Read from `source` into `dest`, reprojecting if necessary.
 
@@ -161,6 +200,19 @@ def read_from_source(source, dest, dst_transform, dst_nodata, dst_projection, re
             dest = dest[offset[0]:offset[0] + tmp.shape[0], offset[1]:offset[1] + tmp.shape[1]]
             where_valid_data = (tmp != src.nodata) if not numpy.isnan(src.nodata) else ~numpy.isnan(tmp)
             numpy.copyto(dest, tmp, where=where_valid_data)
+        elif allow_overviews and _source_has_overviews(src):
+            out_shape, out_transform = _calculate_scaled_transform(src.crs, src.transform, src.shape,
+                                                                   dst_projection, dst_transform, dest.shape)
+            data = src.read(out_shape=out_shape)
+            rasterio.warp.reproject(data,
+                                    dest,
+                                    src_transform=out_transform,
+                                    src_crs=str(src.crs),
+                                    src_nodata=src.nodata,
+                                    dst_transform=dst_transform,
+                                    dst_crs=str(dst_projection),
+                                    dst_nodata=dst_nodata,
+                                    resampling=resampling)
         else:
             if dest.dtype == numpy.dtype('int8'):
                 dest = dest.view(dtype='uint8')
@@ -174,7 +226,7 @@ def read_from_source(source, dest, dst_transform, dst_nodata, dst_projection, re
 
 
 def reproject_and_fuse(datasources, destination, dst_transform, dst_projection, dst_nodata,
-                       resampling='nearest', fuse_func=None, skip_broken_datasets=False):
+                       resampling='nearest', fuse_func=None, skip_broken_datasets=False, allow_overviews=False):
     """
     Reproject and fuse `sources` into a 2D numpy array `destination`.
 
@@ -203,14 +255,16 @@ def reproject_and_fuse(datasources, destination, dst_transform, dst_projection, 
         return destination
     elif len(datasources) == 1:
         with ignore_exceptions_if(skip_broken_datasets):
-            read_from_source(datasources[0], destination, dst_transform, dst_nodata, dst_projection, resampling)
+            read_from_source(datasources[0], destination, dst_transform, dst_nodata, dst_projection,
+                             resampling, allow_overviews)
         return destination
     else:
         # Multiple sources, we need to fuse them together into a single array
         buffer_ = numpy.empty(destination.shape, dtype=destination.dtype)
         for source in datasources:
             with ignore_exceptions_if(skip_broken_datasets):
-                read_from_source(source, buffer_, dst_transform, dst_nodata, dst_projection, resampling)
+                read_from_source(source, buffer_, dst_transform, dst_nodata, dst_projection,
+                                 resampling, allow_overviews)
                 fuse_func(destination, buffer_)
 
         return destination
@@ -245,6 +299,10 @@ class BandDataSource(object):
     @property
     def shape(self):
         return self.source.shape
+
+    @property
+    def overviews(self):
+        return self.source.ds.overviews(self.source.bidx)
 
     def read(self, window=None, out_shape=None):
         """Read data in the native format, returning a numpy array
@@ -284,6 +342,10 @@ class OverrideBandDataSource(object):
     @property
     def shape(self):
         return self.source.shape
+
+    @property
+    def overviews(self):
+        return self.source.ds.overviews(self.source.bidx)
 
     def read(self, window=None, out_shape=None):
         """Read data in the native format, returning a native array

@@ -455,7 +455,7 @@ class Datacube(object):
 
     @staticmethod
     def load_data(sources, geobox, measurements, fuse_func=None, dask_chunks=None, skip_broken_datasets=False,
-                  use_threads=False):
+                  use_threads=False, allow_overviews=False):
         """
         Load data from :meth:`group_datasets` into an :class:`xarray.Dataset`.
 
@@ -497,12 +497,12 @@ class Datacube(object):
                     data = numpy.full(sources.shape + geobox.shape, measurement['nodata'], dtype=measurement['dtype'])
                     for index, datasets in numpy.ndenumerate(sources.values):
                         _fuse_measurement(data[index], datasets, geobox, measurement, fuse_func=fuse_func,
-                                          skip_broken_datasets=skip_broken_datasets)
+                                          skip_broken_datasets=skip_broken_datasets, allow_overviews=allow_overviews)
                 else:
                     def work_load_data(array_name, index, datasets):
                         data = sa.attach(array_name)
                         _fuse_measurement(data[index], datasets, geobox, measurement, fuse_func=fuse_func,
-                                          skip_broken_datasets=skip_broken_datasets)
+                                          skip_broken_datasets=skip_broken_datasets, allow_overviews=allow_overviews)
 
                     array_name = '_'.join(['DCCORE', str(uuid.uuid4()), str(os.getpid())])
                     sa.create(array_name, shape=sources.shape + geobox.shape, dtype=measurement['dtype'])
@@ -631,7 +631,8 @@ def fuse_lazy(datasets, geobox, measurement, skip_broken_datasets=False, fuse_fu
 
 def _fuse_measurement(dest, datasets, geobox, measurement,
                       skip_broken_datasets=False,
-                      fuse_func=None):
+                      fuse_func=None,
+                      allow_overviews=False):
     reproject_and_fuse([new_datasource(dataset, measurement['name']) for dataset in datasets],
                        dest,
                        geobox.affine,
@@ -639,7 +640,8 @@ def _fuse_measurement(dest, datasets, geobox, measurement,
                        dest.dtype.type(measurement['nodata']),
                        resampling=measurement.get('resampling_method', 'nearest'),
                        fuse_func=fuse_func,
-                       skip_broken_datasets=skip_broken_datasets)
+                       skip_broken_datasets=skip_broken_datasets,
+                       allow_overviews=allow_overviews)
 
 
 def get_bounds(datasets, crs):
