@@ -22,14 +22,16 @@ class Worker(object):
         self._ee_config = config.execution_engine_config
         self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),
                                           WorkerStatuses.ALIVE)
+        message = '{}: Initialised'.format(self)
+        self._store.add_worker_logs(self._id, message)
+        self.logger.debug(message)
 
     def job_starts(self, job):
         '''Set job to running status.'''
         job_id = job['id']
         # Start job
         self._store.set_job_status(job_id, JobStatuses.RUNNING)
-        message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,
-                                                     self._store.get_job_status(job_id).name)
+        message = '{}: job {:03d} is now RUNNING'.format(self, job_id)
         self._store.add_worker_logs(self._id, message)
         self.logger.debug(message)
 
@@ -38,7 +40,10 @@ class Worker(object):
         job_id = job['id']
         # Stop job
         self._store.set_job_status(job_id, job_status)
-        message = 'Job {:03d} ({}) is now {}'.format(job_id, self.__class__.__name__,
-                                                     self._store.get_job_status(job_id).name)
+        message = '{}: job {:03d} is now {}'.format(self, job_id,
+                                                    self._store.get_job_status(job_id).name)
         self._store.add_worker_logs(self._id, message)
         self.logger.debug(message)
+
+    def __repr__(self):
+        return 'Worker {:03d} ({})'.format(self._id, self.__class__.__name__)

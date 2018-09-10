@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import logging
 from enum import Enum, IntEnum
+from datetime import datetime
 
 from redis import WatchError
 
@@ -39,6 +40,9 @@ class WorkerMetadata(object):
         self.name = name
         self.worker_type = worker_type
         self.creation_time = creation_time
+        self._repr = '{} ({} worker) created at {}'.format(
+            name, worker_type.name.lower(),
+            datetime.fromtimestamp(creation_time).isoformat())
 
 
 class StoreWorkers(StoreHandler):
@@ -57,6 +61,7 @@ class StoreWorkers(StoreHandler):
         "network_throughput":  ("min", "max", "avg", "peak1", "peak5", "peak10"),
         "total_throughput": ("compute", "network")
     }
+    K_PUBSUB = 'AE/EE'
 
     def add_worker(self, worker_metadata, worker_status=WorkerStatuses.ALIVE):
         '''Add a worker to the store.
@@ -137,6 +142,9 @@ class StoreWorkers(StoreHandler):
 
         The new logs get pickled an appended to the current list of worker logs.
         '''
+        # Log text messages only to redis channels
+        if isinstance(logs, str):
+            self.post_message(logs)
         return self._add_item_logs(self.K_WORKERS, worker_id, logs)
 
     def get_worker_logs(self, worker_id):
@@ -190,3 +198,7 @@ class StoreWorkers(StoreHandler):
             health[indic] = {param.decode('utf-8'): float(val) for param, val in self._store.hgetall(
                 self._make_key(self.K_WORKERS, self.K_HEALTH, indic, str(worker_id))).items()}
         return health
+
+    def post_message(self, message):
+        '''Post a short message to the communication channel.'''
+        self._store.publish(self.K_PUBSUB, str(message))

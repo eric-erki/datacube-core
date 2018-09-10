@@ -105,10 +105,22 @@ class StoreHandler(object):
         self._redis_config = redis_config
         self._store = StrictRedis(**redis_config, socket_keepalive=True, retry_on_timeout=True,
                                   socket_connect_timeout=10, socket_timeout=10)
+        self.__pubsub = None
 
     def reconnect(self):
         self._store = StrictRedis(**self._redis_config, socket_keepalive=True, retry_on_timeout=True,
                                   socket_connect_timeout=10, socket_timeout=10)
+
+    @property
+    def _pubsub(self):
+        '''Return the pubsub channel.
+
+        It is only initialised on first call, as most workers may not
+        use it (it is required for receiving messages, not posting).
+        '''
+        if not self.__pubsub:
+            self.__pubsub = self._store.pubsub()
+        return self.__pubsub
 
     def _make_key(self, *parts):
         '''Build a redis key using the agreed delimiter.
