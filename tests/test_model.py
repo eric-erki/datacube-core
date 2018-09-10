@@ -1,10 +1,8 @@
 # coding=utf-8
-
-from __future__ import absolute_import
-
+import pytest
 import numpy
 from datacube.testutils import mk_sample_dataset, mk_sample_product
-from datacube.model import GridSpec
+from datacube.model import GridSpec, Measurement
 from datacube.utils import geometry
 from datacube.storage.storage import measurement_paths
 
@@ -72,3 +70,41 @@ def test_product_dimensions():
     product = mk_sample_product('test_product', with_grid_spec=True)
     assert product.grid_spec is not None
     assert product.dimensions == ('time', 'y', 'x')
+
+
+def test_measurement():
+    # Can create a measurement
+    m = Measurement(name='t', dtype='uint8', nodata=255, units='1')
+
+    # retrieve it's vital stats
+    assert m.name == 't'
+    assert m.dtype == 'uint8'
+    assert m.nodata == 255
+    assert m.units == '1'
+
+    # retrieve the information required for filling a DataArray
+    assert m.dataarray_attrs() == {'nodata': 255, 'units': '1'}
+
+    # Can add a new attribute by name and ensure it updates the DataArray attrs too
+    m['bob'] = 10
+    assert m.bob == 10
+    assert m.dataarray_attrs() == {'nodata': 255, 'units': '1', 'bob': 10}
+
+    m['none'] = None
+    assert m.none is None
+
+    # Resampling method is special and *not* needed for DataArray attrs
+    m['resampling_method'] = 'cubic'
+    assert 'resampling_method' not in m.dataarray_attrs()
+
+    # It's possible to copy and update a Measurement instance
+    m2 = m.copy()
+    assert m2.bob == 10
+    assert m2.dataarray_attrs() == m.dataarray_attrs()
+
+    # Must specify *all* required keys. name, dtype, nodata and units
+    with pytest.raises(ValueError) as e:
+        Measurement(name='x', units='1', nodata=0)
+
+    assert 'required keys missing:' in str(e.value)
+    assert 'dtype' in str(e.value)

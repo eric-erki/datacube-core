@@ -5,10 +5,14 @@
 What's New
 **********
 
-Upcoming Release
-================
+=======
+v1.7dev
+=======
 
+- Allow specifying different resampling methods for different data variables of
+  the same Product. (:pull:`551`)
 - Bugfixes and improved performance of `dask`-backed arrays (:pull:`547`)
+
 
 v1.6.1 (27 August 2018)
 =======================

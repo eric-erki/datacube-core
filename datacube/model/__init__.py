@@ -318,26 +318,39 @@ class Dataset(object):
 
 
 class Measurement(dict):
+    """
+    Describes a single data variable of a Product or Dataset.
+
+    Must include, which can be used when loading and interpreting data:
+
+     - name
+     - dtype - eg: int8, int16, float32
+     - nodata - What value represent No Data
+     - units
+
+    Attributes can be accessed using ``dict []`` syntax.
+
+    Can also include attributes like alternative names 'aliases', and spectral and bit flags
+    definitions to aid with interpreting the data.
+
+    """
     REQUIRED_KEYS = ('name', 'dtype', 'nodata', 'units')
     OPTIONAL_KEYS = ('aliases', 'spectral_definition', 'flags_definition')
-    FILTER_ATTR_KEYS = ('name', 'dtype', 'aliases')
+    ATTR_BLACKLIST = set(['name', 'dtype', 'aliases', 'resampling_method'])
 
-    def __init__(self, **measurement_dict):
-        missing_keys = set(self.REQUIRED_KEYS) - set(measurement_dict)
+    def __init__(self, **kwargs):
+        missing_keys = set(self.REQUIRED_KEYS) - set(kwargs)
         if missing_keys:
             raise ValueError("Measurement required keys missing: {}".format(missing_keys))
 
-        measurement_data = {key: value for key, value in measurement_dict.items()
-                            if key in self.REQUIRED_KEYS + self.OPTIONAL_KEYS}
-
-        super().__init__(measurement_data)
+        super().__init__(**kwargs)
 
     def __getattr__(self, key):
         """ Allow access to items as attributes. """
-        if key in self:
-            return self[key]
-
-        raise AttributeError("'Measurement' object has no attribute '{}'".format(key))
+        v = self.get(key, self)
+        if v is self:
+            raise AttributeError("'Measurement' object has no attribute '{}'".format(key))
+        return v
 
     def __repr__(self):
         return "Measurement({})".format(super(Measurement, self).__repr__())
@@ -349,7 +362,7 @@ class Measurement(dict):
 
     def dataarray_attrs(self):
         """This returns attributes filtered for display in a dataarray."""
-        return {key: value for key, value in self.items() if key not in self.FILTER_ATTR_KEYS}
+        return {key: value for key, value in self.items() if key not in self.ATTR_BLACKLIST}
 
 
 @schema_validated(SCHEMA_PATH / 'metadata-type-schema.yaml')
