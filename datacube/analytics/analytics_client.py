@@ -6,8 +6,11 @@ from __future__ import absolute_import
 import os
 import logging
 from time import sleep, monotonic
+from pathlib import Path
+from uuid import uuid4
 from celery import Celery
 from redis.exceptions import TimeoutError
+from dill import dumps
 
 from datacube.engine_common.store_handler import StoreHandler
 from datacube.engine_common.file_transfer import FileTransfer
@@ -15,6 +18,7 @@ from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
 from datacube.compat import urlparse
+from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 
 def celery_app(store_config=None):
@@ -55,7 +59,9 @@ class AnalyticsClient(object):
         '''
         self.logger = logging.getLogger(self.__class__.__name__)
         self._store = StoreHandler(**config.redis_config)
-        self._file_transfer = FileTransfer()
+        self._use_s3 = config.execution_engine_config['use_s3']
+        self._result_bucket = config.execution_engine_config['result_bucket']
+
         # global app
         app.conf.update(result_backend=config.redis_celery_config['url'],
                         broker_url=config.redis_celery_config['url'])
@@ -64,7 +70,7 @@ class AnalyticsClient(object):
     # pylint: disable=too-many-locals
     def submit_python_function(self, function, function_params=None, data=None,
                                user_tasks=None, walltime='00:00:30', check_period=1, paths=None, env=None,
-                               output_dir=None, *args, **kwargs):
+                               tmpdir=None, *args, **kwargs):
         '''Submit a python function and data to the engine via celery.
 
         :param function function: Python function to be executed by the engine.
@@ -84,9 +90,12 @@ class AnalyticsClient(object):
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
           subjob results.
         '''
+        unique_id = uuid4().hex
+        if tmpdir:
+            tmpdir = Path(tmpdir) / unique_id
         start_time = monotonic()
-        func = self._file_transfer.serialise(function)
-        # compress files in function_params
+        file_transfer = FileTransfer(base_dir=None if self._use_s3 else str(tmpdir))
+        # compress files in function_params and store in S3
         if function_params:
             for key, value in function_params.items():
                 if not isinstance(value, str):
@@ -96,22 +105,45 @@ class AnalyticsClient(object):
                     fname = os.path.basename(url.path)
                     with open(url.path, "rb") as _data:
                         f = _data.read()
-                        _data = self._file_transfer.compress(f)
+                        _data = file_transfer.compress(f)
                     function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
-        analysis = self._run_python_function_base(func, function_params, data, user_tasks,
-                                                  walltime, paths, env, output_dir, **kwargs)
+        bucket = 'ronnie-benchmark-ronnie-s3'
+        key = '{}/user_payload.bin'.format(unique_id)
+        params_url = '{protocol}://{tmpdir}{bucket}/{key}'.format(
+            protocol='s3' if self._use_s3 else 'file',
+            tmpdir='' if self._use_s3 else '{}//'.format(tmpdir),
+            bucket=bucket,
+            key=key
+        )
+        input_params = {
+            'id': unique_id,
+            'type': 'base_job',
+            'function': file_transfer.serialise(function),
+            'function_params': function_params,
+            'data': data,
+            'user_tasks': user_tasks,
+            'walltime': walltime,
+            'check_period': check_period,
+            'paths': paths,
+            'env': env,
+            'args': args,
+            'kwargs': kwargs
+        }
+        s3io = S3IO(self._use_s3, str(file_transfer.s3_dir))
+        s3io.put_bytes(bucket, key, dumps(input_params))
+        analysis = self._run_python_function_base(params_url)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
         jro.checkForUpdate(check_period, start_time)
         return jro
 
-    def _run_python_function_base(self, *args, **kwargs):
+    def _run_python_function_base(self, params_url):
         '''Run the function using celery.
 
         This is placed in a separate method so it can be overridden
         during tests.
         '''
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=args, kwargs=kwargs)
+                                   args=(params_url,))
         last_error = None
         for attempt in range(50):
             try:

@@ -18,6 +18,7 @@ import uuid
 from itertools import repeat
 from operator import mul
 from os.path import expanduser
+from pathlib import Path
 
 import boto3
 import boto3.session
@@ -284,15 +285,10 @@ class S3IO(object):
             # Exceeded max retries
             raise RuntimeError('s3io.put_bytes', 'exceeded max retries', last_error)
         else:
-            directory = self.file_path + "/" + str(s3_bucket)
-            try:
-                os.makedirs(directory)
-            except OSError:
-                pass
-            f = open(directory + "/" + str(s3_key), "wb")
-
-            f.write(data)
-            f.close()
+            filepath = Path(self.file_path) / s3_bucket / s3_key
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            with filepath.open('wb') as fh:
+                fh.write(data)
 
     # # functionality for byte range put does not exist in S3 API
     # # need to do a get, change the bytes in the byte range and upload_part

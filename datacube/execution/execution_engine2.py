@@ -40,12 +40,9 @@ class ExecutionEngineV2(Worker):
     State & Health tracking are tracked via redis state/health store.
     '''
 
-    def __init__(self, name, paths, env, output_dir=None):
-        super(ExecutionEngineV2, self).__init__(name, WorkerTypes.EXECUTION, paths, env, output_dir)
-        self._file_transfer = FileTransfer()
-        self._use_s3 = self._ee_config['use_s3']
+    def __init__(self, name, params_url):
+        super().__init__(name, WorkerTypes.EXECUTION, params_url)
         self._result_type = ResultTypes.S3IO if self._use_s3 else ResultTypes.FILE
-        self._result_bucket = self._ee_config['result_bucket']
 
     def _analyse(self, function, data, storage_params, *args, **kwargs):
         '''stub to call _decompose to perform data decomposition if required'''
@@ -75,7 +72,7 @@ class ExecutionEngineV2(Worker):
         '''Saves a single `xarray.DataArray` to s3/s3-file storage'''
         s3_key = '_'.join([base_name, str(chunk_id)])
         data = self._file_transfer.compress_array(array)
-        s3io = S3IO(self._use_s3, self._output_dir)
+        s3io = S3IO(self._use_s3, str(self._file_transfer.s3_dir))
         s3io.put_bytes(self._result_bucket, s3_key, data, True)
         return s3_key
 
@@ -85,11 +82,11 @@ class ExecutionEngineV2(Worker):
         The metadata is prepared from the base job id, and the job itself. A new result entry is
         created in the store.
         '''
-        base_name = '_'.join(['job', str(base_job_id), output_name, str(band_name)])
+        base_name = self._request_id + '/' + '_'.join(['job', str(base_job_id), output_name, str(band_name)])
         descriptor = {
             'type': self._result_type,
             'load_type': LoadType.EAGER,
-            'output_dir': self._output_dir,
+            'output_dir': str(self._file_transfer.s3_dir),
             'base_name': base_name,
             'output_name': output_name,
             'band': str(band_name),
@@ -107,31 +104,37 @@ class ExecutionEngineV2(Worker):
         result_meta.descriptor['id'] = result_id
         self._store.update_result(result_id, result_meta)
         s3_key = self._save_array_in_s3(array, base_name, job['chunk_id'])
-        self.logger.debug('New result (id:%d) metadata stored to %s-%s: %s',
+        self.logger.debug('New result (id:%d) metadata stored to s3://%s/%s: %s',
                           result_id, self._result_bucket, s3_key, result_meta.descriptor)
 
     def pre_process(self, job):
-        if self._use_s3:
-            s3io = S3IO(self._use_s3, self._output_dir)
-            job['function_params'] = loads(s3io.get_bytes(self._result_bucket, 'param/' + job['function_params']))
-        else:
-            job['function_params'] = self._store.get_function_params(job['function_params'])
-        if 'function_params' not in job or job['function_params'] is None:
-            job['function_params'] = {}
+        job['function_params'] = {}
+        if 'function_params' in self._input_params and self._input_params['function_params']:
+            job['function_params'] = self._input_params['function_params']
+        # if self._use_s3:
+        #     s3io = S3IO(self._use_s3, self._output_dir)
+        #     job['function_params'] = loads(s3io.get_bytes(self._result_bucket,
+        #                                                   str(self._file_transfer.param_dir /
+        #                                                       job['function_params']).lstrip('/')))
+        #     # print('@'*60, str(self._file_transfer.param_dir /
+        #     #       job['function_params']).lstrip('/'), job['function_params'])
+        # else:
+        #     job['function_params'] = self._store.get_function_params(job['function_params'])
+        # if 'function_params' not in job or job['function_params'] is None:
+        #     job['function_params'] = {}
         if 'user_task' not in job or job['user_task'] is None:
             job['user_task'] = {}
         job['function_params']['input_dir'] = str(self._file_transfer.input_dir)
         job['function_params']['output_dir'] = str(self._file_transfer.output_dir)
 
         # Uncompress and populate input directory input args
-        if 'function_params' in job:
-            for key, value in job['function_params'].items():
-                if not isinstance(value, dict):
-                    continue
-                if 'copy_to_input_dir' not in value or not value['copy_to_input_dir']:
-                    continue
-                filepath = self._file_transfer.decompress_to_file(value['data'], value['fname'])
-                job['function_params'][key] = filepath
+        for key, value in job['function_params'].items():
+            if not isinstance(value, dict):
+                continue
+            if 'copy_to_input_dir' not in value or not value['copy_to_input_dir']:
+                continue
+            filepath = self._file_transfer.decompress_to_file(value['data'], value['fname'])
+            job['function_params'][key] = filepath
 
     # pylint: disable=too-many-locals
     def post_process(self, job, user_data):
@@ -146,7 +149,7 @@ class ExecutionEngineV2(Worker):
             for filepath in self._file_transfer.output_dir.rglob('*'):
                 if filepath.is_file():
                     relpath = str(filepath.relative_to(self._file_transfer.output_dir))
-                    s3_key = str(filepath).lstrip('/')
+                    s3_key = self._request_id + str(filepath)
                     s3.upload_file(str(filepath), s3_bucket, s3_key, Config=transfer_config)
                     output_files[relpath] = 's3://{}/{}'.format(s3_bucket, s3_key)
         else:
@@ -163,9 +166,11 @@ class ExecutionEngineV2(Worker):
         self._store.set_user_data(job_id, user_data)
         return {'output_files': output_files}
 
-    def execute(self, job, base_job_id, *args, **kwargs):
+    def execute(self, job, base_job_id):
         '''Start the job, save results, then set it as completed.'''
         self.logger.debug('Starting execution of subjob %d', job['id'])
+        args = self._input_params['args']
+        kwargs = self._input_params['kwargs']
         self.job_starts(job)
         self.pre_process(job)
 

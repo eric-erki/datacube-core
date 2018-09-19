@@ -11,6 +11,7 @@ from dill import dumps
 from .worker import Worker
 from datacube.engine_common.store_handler import FunctionTypes
 from datacube.engine_common.store_workers import WorkerTypes
+from datacube.engine_common.file_transfer import FileTransfer
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
@@ -35,12 +36,10 @@ class AnalyticsEngineV2(Worker):
         'ttl': -1
     }
 
-    def __init__(self, name, paths=None, env=None, output_dir=None):
-        super(AnalyticsEngineV2, self).__init__(name, WorkerTypes.ANALYSIS, paths, env, output_dir)
-        self._use_s3 = self._ee_config['use_s3']
-        self._result_bucket = self._ee_config['result_bucket']
+    def __init__(self, name, params_url):
+        super().__init__(name, WorkerTypes.ANALYSIS, params_url)
 
-    def analyse(self, function, function_params, data, user_tasks, *args, **kwargs):
+    def analyse(self):
         '''user - job submit
         AE - gets the job
            - job decomposition
@@ -61,6 +60,13 @@ class AnalyticsEngineV2(Worker):
              - job/result
                - status
         '''
+        function = self._input_params['function']
+        function_params = self._input_params['function_params']
+        data = self._input_params['data'] if 'data' in self._input_params else None
+        user_tasks = self._input_params['user_tasks'] if 'user_tasks' in self._input_params else None
+        args = self._input_params['args'] if 'args' in self._input_params else None
+        kwargs = self._input_params['kwargs'] if 'kwargs' in self._input_params else None
+
         if data and user_tasks:
             raise ValueError('Only `data` or `user_tasks` can be specified at once')
 
@@ -98,11 +104,9 @@ class AnalyticsEngineV2(Worker):
         # todo: reserve key in redis here
         jobs = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
-        if self._use_s3:
-            s3io = S3IO(True)
-            s3io.put_bytes(self._result_bucket, 'param/' + function_params_id, dumps(function_params))
-        else:
-            self._store.set_function_params(function_params_id, function_params)
+        s3io = S3IO(self._use_s3, self._file_transfer.s3_dir)
+        key = '{}/user_payload.bin'.format(self._request_id)
+        s3io.put_bytes(self._result_bucket, key, dumps(function_params))
         return {
             'base': base,
             'jobs': jobs

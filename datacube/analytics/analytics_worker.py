@@ -98,39 +98,35 @@ def stop_worker():
 
 
 @app.task
-def run_python_function_base(function, function_params=None, data=None, user_tasks=None,
-                             walltime=None, paths=None, env=None, output_dir=None,
-                             *args, **kwargs):
+def run_python_function_base(params_url):
     '''Process the function and data submitted by the user.'''
-    analytics_engine = AnalyticsEngineV2('Analytics Engine', paths, env, output_dir)
+    analytics_engine = AnalyticsEngineV2('Analytics Engine', params_url)
     if not analytics_engine:
         raise RuntimeError('Analytics engine must be initialised by calling `initialise_engines`')
-    jro, decomposed = analytics_engine.analyse(function, function_params, data, user_tasks, *args, **kwargs)
+    jro, decomposed = analytics_engine.analyse()
 
     subjob_tasks = []
     for job in decomposed['jobs']:
-        subjob_tasks.append(run_python_function_subjob.delay(job, jro[0]['id'], paths, env, output_dir,
-                                                             *args, **kwargs))
+        subjob_tasks.append(run_python_function_subjob.delay(job, jro[0]['id'], params_url))
 
-    monitor_task = monitor_jobs.delay(decomposed, subjob_tasks, walltime, paths, env, output_dir)
+    monitor_task = monitor_jobs.delay(decomposed, subjob_tasks, params_url)
 
     return jro
 
 
 @app.task
-def run_python_function_subjob(job, base_job_id, paths=None, env=None, output_dir=None,
-                               *args, **kwargs):
+def run_python_function_subjob(job, base_job_id, params_url):
     '''Process a subjob, created by the base job.'''
-    execution_engine = ExecutionEngineV2('Execution Engine', paths, env, output_dir)
+    execution_engine = ExecutionEngineV2('Execution Engine', params_url)
     if not execution_engine:
         raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
-    execution_engine.execute(job, base_job_id, *args, **kwargs)
+    execution_engine.execute(job, base_job_id)
 
 
 @app.task
-def monitor_jobs(decomposed, subjob_tasks, walltime, paths=None, env=None, output_dir=None):
+def monitor_jobs(decomposed, subjob_tasks, params_url):
     '''Monitors base job.'''
-    base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, subjob_tasks, walltime, paths, env, output_dir)
+    base_job_monitor = BaseJobMonitor('Base Job Monitor', decomposed, subjob_tasks, params_url)
     base_job_monitor.monitor_completion()
 
 

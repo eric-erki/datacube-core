@@ -14,11 +14,11 @@ class BaseJobMonitor(Worker):
     perform monitoring at the proper times.
     """
 
-    def __init__(self, name, decomposed, subjob_tasks, walltime, paths=None, env=None, output_dir=None):
-        super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, paths, env, output_dir)
+    def __init__(self, name, decomposed, subjob_tasks, params_url):
+        super(BaseJobMonitor, self).__init__(name, WorkerTypes.MONITOR, params_url)
         self._decomposed = decomposed
-        self._walltime = walltime
-        self._walltime_in_secs = self._walltime_to_sec(walltime)
+        self._walltime = self._input_params['walltime']
+        self._walltime_in_secs = self._walltime_to_sec(self._walltime)
         self._subjob_tasks = subjob_tasks
         self._start_time = monotonic()
 

@@ -48,6 +48,7 @@ from enum import Enum
 import xarray as xr
 from copy import deepcopy
 from time import monotonic
+from tempfile import mkdtemp
 
 import datacube
 from datacube.engine_common.store_handler import ResultTypes, JobStatuses
@@ -422,7 +423,7 @@ class LazyArray(object):
             for key, data_slice, local_slice, chunk_shape, offset, chunk_id in zipped:
                 required_chunk = zip((key,), (data_slice,), (local_slice,), (chunk_shape,), (offset,), (chunk_id,))
                 idx = (name,) + np.unravel_index(chunk_id, [int(np.ceil(s/c)) for s, c in zip(shape, chunks)])
-                s3lio = S3LIO(True, use_s3, self._output_dir)
+                s3lio = S3LIO(True, use_s3, str(self._output_dir) if self._output_dir else None)
                 dsk[idx] = (s3lio.get_data_single_chunks_unlabeled, required_chunk, dtype, bucket)
 
             return Array(dsk, name, chunks=chunks, shape=shape, dtype=dtype)
@@ -435,7 +436,7 @@ class LazyArray(object):
             use_s3 = True
             if self._type == ResultTypes.FILE:
                 use_s3 = False
-            s3lio = S3LIO(True, use_s3, self._output_dir)
+            s3lio = S3LIO(True, use_s3, str(self._output_dir) if self._output_dir else None)
             keys, data_slices, local_slices, chunk_shapes, offset, chunk_ids = \
                 s3lio.build_chunk_list(self._base_name, self._shape, self._chunk, self._dtype, bounded_slice, False)
 
@@ -717,8 +718,8 @@ class UserData(object):
                 self._user_data = self._jro.client.get_user_data(self.job_id, self._jro._paths, self._jro._env)
                 for datum in self._user_data:
                     if FileTransfer.ARCHIVE in datum:
-                        # Restore archive to local temp dir and update user_data file entries
-                        file_transfer = FileTransfer()
+                        # Restore archive to a local temp dir and update user_data file entries
+                        file_transfer = FileTransfer(base_dir=mkdtemp())
                         restored = file_transfer.restore_archive(datum[FileTransfer.ARCHIVE])
                         datum.update(restored)
                         del datum[FileTransfer.ARCHIVE]
