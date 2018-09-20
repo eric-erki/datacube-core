@@ -104,9 +104,6 @@ class AnalyticsEngineV2(Worker):
         # todo: reserve key in redis here
         jobs = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
-        s3io = S3IO(self._use_s3, self._file_transfer.s3_dir)
-        key = '{}/user_payload.bin'.format(self._request_id)
-        s3io.put_bytes(self._result_bucket, key, dumps(function_params))
         return {
             'base': base,
             'jobs': jobs

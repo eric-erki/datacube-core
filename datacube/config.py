@@ -43,7 +43,8 @@ redis_celery.host: 127.0.0.1
 redis_celery.port: 6379
 redis_celery.db: 1
 
-execution_engine.result_bucket: eetest2
+execution_engine.user_bucket: eetest2-user
+execution_engine.result_bucket: eetest2-system
 execution_engine.use_s3: False
 
 [user]
@@ -168,6 +169,7 @@ class LocalConfig(object):
     @property
     def execution_engine_config(self):
         return {
+            'user_bucket': self.get('execution_engine.user_bucket'),
             'result_bucket': self.get('execution_engine.result_bucket'),
             'use_s3': self.get('execution_engine.use_s3') == 'True'
         }

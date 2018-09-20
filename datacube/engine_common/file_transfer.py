@@ -4,32 +4,42 @@ from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp, gettempdir
 from sys import version_info
+from urllib.parse import urlparse
 from uuid import uuid4
 from zstd import ZstdDecompressor, ZstdCompressor
 from dill import loads
 from zlib import error as ZlibError
 import numpy as np
+from dill import dumps
 
-from datacube.engine_common.pickle_utils import dumps
-
+from datacube.engine_common.pickle_utils import dumps as dc_dumps
+from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
 class FileTransfer(object):
+    PAYLOAD = 'payload.bin'
+
     ARCHIVE = '__archive'
 
     WORKERS_DIR = 'workers'
     INPUT_DIR = 'input'
     OUTPUT_DIR = 'output'
+    S3_DIR = 's3'
 
-    def __init__(self, base_dir=None):
-        self._base_dir = Path(base_dir) if base_dir else None
+    def __init__(self, base_dir=None, use_s3=False):
+        if use_s3:
+            self._base_dir = Path('/')
+        elif base_dir:
+            self._base_dir = Path(base_dir)
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise ValueError('`base_dir` required when using s3-file')
+        self._use_s3 = use_s3
         self._worker_dir = self.base_dir / self.WORKERS_DIR / uuid4().hex
         self._compressor = None
         self._decompressor = None
         self._s3_dir = None
         self._input_dir = None
         self._output_dir = None
-        self._data_dir = None
-        self._param_dir = None
 
     def cleanup(self):
         if self._worker_dir:
@@ -42,14 +52,12 @@ class FileTransfer(object):
 
     @property
     def base_dir(self):
-        if not self._base_dir:
-            self._base_dir = Path('/') #mkdtemp())
         return self._base_dir
 
     @property
     def s3_dir(self):
         if not self._s3_dir:
-            self._s3_dir = self.base_dir / 's3'
+            self._s3_dir = self.base_dir / self.S3_DIR
             self._s3_dir.mkdir(parents=True, exist_ok=True)
         return self._s3_dir
 
@@ -68,20 +76,6 @@ class FileTransfer(object):
         return self._output_dir
 
     @property
-    def data_dir(self):
-        if not self._data_dir:
-            self._data_dir = self.base_dir / 'data'
-            self._data_dir.mkdir(parents=True, exist_ok=True)
-        return self._data_dir
-
-    @property
-    def param_dir(self):
-        if not self._param_dir:
-            self._param_dir = self.base_dir / 'param'
-            self._param_dir.mkdir(parents=True, exist_ok=True)
-        return self._param_dir
-
-    @property
     def compressor(self):
         if not self._compressor:
             self._compressor = ZstdCompressor(level=9, write_content_size=True)
@@ -92,6 +86,47 @@ class FileTransfer(object):
         if not self._decompressor:
             self._decompressor = ZstdDecompressor()
         return self._decompressor
+
+    def store_payload(self, bucket, unique_id, payload, tmpdir=None):
+        key = '{}/{}'.format(unique_id, self.PAYLOAD)
+        url = '{protocol}://{base_dir}{bucket}/{key}'.format(
+            protocol='s3' if self._use_s3 else 'file',
+            base_dir='' if self._use_s3 else '{}//'.format(self.s3_dir),
+            bucket=bucket,
+            key=key
+        )
+        s3io = S3IO(self._use_s3, str(self.s3_dir))
+        s3io.put_bytes(bucket, key, dumps(self.pack(payload)))
+        return url
+
+    def pack(self, data):
+        '''Recursively pack serialise data, pulling data from local files.
+
+        Any file URL contained in a dictionary is replaced by the
+        compressed data of the corresponding file, and stored into a sub-dict of the form:
+        ```{
+            'fname': filename,
+            'data': byte data,
+            'copy_to_input_dir': True
+        }```
+        '''
+        if callable(data):
+            return self.serialise(data)
+        elif isinstance(data, dict):
+            return {key: self.pack(val) for key, val in data.items()}
+        elif isinstance(data, str):
+            parsed = urlparse(data)
+            if parsed.scheme == 'file':
+                filepath = Path(parsed.path)
+                with filepath.open('rb') as fh:
+                    contents = self.compress(fh.read())
+                    return {
+                        'fname': filepath.name,
+                        'data': contents,
+                        'copy_to_input_dir': True
+                    }
+        # All other cases (incl. str that is not a file URL)
+        return data
 
     def compress(self, data):
         return self.compressor.compress(data)
@@ -110,7 +145,7 @@ class FileTransfer(object):
         return self.compress(data)
 
     def serialise(self, data):
-        return self.compress(dumps(data))
+        return self.compress(dc_dumps(data))
 
     def deserialise(self, data):
         return loads(self.decompress(data))

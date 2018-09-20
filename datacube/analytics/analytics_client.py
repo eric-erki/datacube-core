@@ -60,7 +60,7 @@ class AnalyticsClient(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         self._store = StoreHandler(**config.redis_config)
         self._use_s3 = config.execution_engine_config['use_s3']
-        self._result_bucket = config.execution_engine_config['result_bucket']
+        self._user_bucket = config.execution_engine_config['user_bucket']
 
         # global app
         app.conf.update(result_backend=config.redis_celery_config['url'],
@@ -85,40 +85,21 @@ class AnalyticsClient(object):
            A job will be created for each (function, function_params, user task)
         :param int check_period: Period to check job completion status.
           JRO.update() will be called upon completion to update result metadata.
+        :param str tmpdir: temporary dir only required for s3-file
+          protocol. It will be created if not already existing.
         :param list args: Optional positional arguments for the function.
         :param dict kargs: Optional keyword arguments for the funtion.
         :return: Tuple of `(jro, results_promises)` where `result_promises` are promises of the
           subjob results.
+
         '''
+        # Replace this by the incoming request ID
         unique_id = uuid4().hex
-        if tmpdir:
-            tmpdir = Path(tmpdir) / unique_id
         start_time = monotonic()
-        file_transfer = FileTransfer(base_dir=None if self._use_s3 else str(tmpdir))
-        # compress files in function_params and store in S3
-        if function_params:
-            for key, value in function_params.items():
-                if not isinstance(value, str):
-                    continue
-                url = urlparse(value)
-                if url.scheme == 'file':
-                    fname = os.path.basename(url.path)
-                    with open(url.path, "rb") as _data:
-                        f = _data.read()
-                        _data = file_transfer.compress(f)
-                    function_params[key] = {'fname': fname, 'data': _data, 'copy_to_input_dir': True}
-        bucket = 'ronnie-benchmark-ronnie-s3'
-        key = '{}/user_payload.bin'.format(unique_id)
-        params_url = '{protocol}://{tmpdir}{bucket}/{key}'.format(
-            protocol='s3' if self._use_s3 else 'file',
-            tmpdir='' if self._use_s3 else '{}//'.format(tmpdir),
-            bucket=bucket,
-            key=key
-        )
-        input_params = {
+        payload = {
             'id': unique_id,
             'type': 'base_job',
-            'function': file_transfer.serialise(function),
+            'function': function,
             'function_params': function_params,
             'data': data,
             'user_tasks': user_tasks,
@@ -129,21 +110,23 @@ class AnalyticsClient(object):
             'args': args,
             'kwargs': kwargs
         }
-        s3io = S3IO(self._use_s3, str(file_transfer.s3_dir))
-        s3io.put_bytes(bucket, key, dumps(input_params))
-        analysis = self._run_python_function_base(params_url)
+        if tmpdir:
+            tmpdir = Path(tmpdir) / unique_id
+        file_transfer = FileTransfer(tmpdir, self._use_s3)
+        url = file_transfer.store_payload(self._user_bucket, unique_id, payload)
+        analysis = self._run_python_function_base(url)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
         jro.checkForUpdate(check_period, start_time)
         return jro
 
-    def _run_python_function_base(self, params_url):
+    def _run_python_function_base(self, url):
         '''Run the function using celery.
 
         This is placed in a separate method so it can be overridden
         during tests.
         '''
         analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(params_url,))
+                                   args=(url,))
         last_error = None
         for attempt in range(50):
             try:

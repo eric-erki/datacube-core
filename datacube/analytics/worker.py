@@ -28,6 +28,9 @@ class Worker(object):
             # Double shash expected, else an exception will raise
             tmpdir, path = path.split('//')
             self._tmpdir = Path(tmpdir)
+            # FileTransfer base dir should be one level down from the S3 subdir
+            if self._tmpdir.stem == FileTransfer.S3_DIR:
+                self._tmpdir = self._tmpdir.parent
             path = Path(path)
             user_bucket = path.parts[0]
             path = path.relative_to(user_bucket)
@@ -35,7 +38,7 @@ class Worker(object):
             user_bucket = parsed.netloc
             path = Path(path.lstrip('/'))
         self._request_id = path.parts[0]
-        self._file_transfer = FileTransfer(base_dir=self._tmpdir)
+        self._file_transfer = FileTransfer(self._tmpdir, self._use_s3)
 
         # Fetch config from S3
         s3io = S3IO(self._use_s3, str(self._file_transfer.s3_dir))
