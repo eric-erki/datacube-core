@@ -166,8 +166,11 @@ class ExecutionEngineV2(Worker):
         self._store.set_user_data(job_id, user_data)
         return {'output_files': output_files}
 
-    def execute(self, job, base_job_id):
+    def execute(self):
         '''Start the job, save results, then set it as completed.'''
+        job = self._job_params
+        base_job_id = self._request_id
+
         self.logger.debug('Starting execution of subjob %d', job['id'])
         args = self._input_params['args']
         kwargs = self._input_params['kwargs']

@@ -106,8 +106,8 @@ def run_python_function_base(params_url):
     jro, decomposed = analytics_engine.analyse()
 
     subjob_tasks = []
-    for job in decomposed['jobs']:
-        subjob_tasks.append(run_python_function_subjob.delay(job, jro[0]['id'], params_url))
+    for url in decomposed['urls']:
+        subjob_tasks.append(run_python_function_subjob.delay(url))
 
     monitor_task = monitor_jobs.delay(decomposed, subjob_tasks, params_url)
 
@@ -115,12 +115,12 @@ def run_python_function_base(params_url):
 
 
 @app.task
-def run_python_function_subjob(job, base_job_id, params_url):
+def run_python_function_subjob(url):
     '''Process a subjob, created by the base job.'''
-    execution_engine = ExecutionEngineV2('Execution Engine', params_url)
+    execution_engine = ExecutionEngineV2('Execution Engine', url)
     if not execution_engine:
         raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
-    execution_engine.execute(job, base_job_id)
+    execution_engine.execute()
 
 
 @app.task

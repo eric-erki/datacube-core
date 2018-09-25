@@ -719,7 +719,7 @@ class UserData(object):
                 for datum in self._user_data:
                     if FileTransfer.ARCHIVE in datum:
                         # Restore archive to a local temp dir and update user_data file entries
-                        file_transfer = FileTransfer(mkdtemp())
+                        file_transfer = FileTransfer(base_dir=mkdtemp(), use_s3=False, bucket='', ids=[])
                         restored = file_transfer.restore_archive(datum[FileTransfer.ARCHIVE])
                         datum.update(restored)
                         del datum[FileTransfer.ARCHIVE]

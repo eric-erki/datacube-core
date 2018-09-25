@@ -20,29 +20,26 @@ from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 class Worker(object):
     def __init__(self, name, worker_type, params_url):
         self.logger = logging.getLogger(name)
-        parsed = urlparse(params_url)
-        self._use_s3 = parsed.scheme == 's3'
-        self._tmpdir = None
-        path = parsed.path
-        if not self._use_s3:
-            # Double shash expected, else an exception will raise
-            tmpdir, path = path.split('//')
-            self._tmpdir = Path(tmpdir)
-            # FileTransfer base dir should be one level down from the S3 subdir
-            if self._tmpdir.stem == FileTransfer.S3_DIR:
-                self._tmpdir = self._tmpdir.parent
-            path = Path(path)
-            user_bucket = path.parts[0]
-            path = path.relative_to(user_bucket)
-        else:
-            user_bucket = parsed.netloc
-            path = Path(path.lstrip('/'))
-        self._request_id = path.parts[0]
-        self._file_transfer = FileTransfer(self._tmpdir, self._use_s3)
+        self._params_url = params_url
+        self._file_transfer = FileTransfer(url=params_url)
+        self._use_s3 = self._file_transfer.use_s3
+        self._tmpdir = self._file_transfer.base_dir
+        bucket = self._file_transfer.bucket
+        self._request_id = self._file_transfer.ids[0]
+        self._sub_id = self._file_transfer.ids[1] if len(self._file_transfer.ids) > 1 else None
 
-        # Fetch config from S3
-        s3io = S3IO(self._use_s3, str(self._file_transfer.s3_dir))
-        self._input_params = loads(s3io.get_bytes(user_bucket, str(path)))
+        # Fetch data from S3
+        data = self._file_transfer.fetch_payload()
+        # Sub-job data?
+        if 'job' in data:
+            self._job_params = data['job']
+            # Now fetch function params from S3
+            params_url = data['params_url'].lstrip('URL:')
+            file_transfer2 = FileTransfer(url=params_url)
+            self._input_params = file_transfer2.fetch_payload()
+        else:
+            self._input_params = data
+
         # Initialise datacube
         if 'paths' in self._input_params and 'env' in self._input_params:
             config = LocalConfig.find(self._input_params['paths'], self._input_params['env'])

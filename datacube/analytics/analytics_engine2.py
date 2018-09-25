@@ -11,10 +11,10 @@ from dill import dumps
 from .worker import Worker
 from datacube.engine_common.store_handler import FunctionTypes
 from datacube.engine_common.store_workers import WorkerTypes
-from datacube.engine_common.file_transfer import FileTransfer
 from datacube.analytics.job_result import JobResult, LoadType
 from datacube.drivers.s3.storage.s3aio.s3lio import S3LIO
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
+from datacube.engine_common.file_transfer import FileTransfer
 
 
 class AnalyticsEngineV2(Worker):
@@ -102,11 +102,12 @@ class AnalyticsEngineV2(Worker):
         # Prepare the sub-jobs and base job info
         function_params_id = sha512(dumps(function_params)).hexdigest()
         # todo: reserve key in redis here
-        jobs = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
+        jobs, urls = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
         return {
             'base': base,
-            'jobs': jobs
+            'jobs': jobs,
+            'urls': urls
         }
 
     def _store_job(self, job, dependent_job_ids=None):
@@ -150,11 +151,18 @@ class AnalyticsEngineV2(Worker):
 
     def _create_jobs(self, function, data, function_params, storage_params, user_tasks):
         '''Decompose data and function into a list of jobs.'''
+        urls = []
         jobs = self._decompose_function(function, data, function_params, storage_params, user_tasks)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
-        return jobs
+            # Store job in S3
+            payload = {
+                'params_url': 'URL:{}'.format(self._params_url),
+                'job': job
+            }
+            urls.append(self._file_transfer.store_payload(payload, sub_id=job['id']))
+        return jobs, urls
 
     def _decompose_data(self, data, storage_params):
         '''Decompose data into a list of chunks.'''

@@ -25,21 +25,23 @@ class FileTransfer(object):
     OUTPUT_DIR = 'output'
     S3_DIR = 's3'
 
-    def __init__(self, base_dir=None, use_s3=False):
-        if use_s3:
-            self._base_dir = Path('/')
-        elif base_dir:
-            self._base_dir = Path(base_dir)
-            self._base_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, url=None, base_dir=None, use_s3=False, bucket=None, ids=None):
+        if url:
+            self._parse_url(url)
         else:
-            raise ValueError('`base_dir` required when using s3-file')
-        self._use_s3 = use_s3
+            self._parse_params(base_dir, use_s3, bucket, ids)
+        if self.use_s3:
+            self._base_dir = Path('/')
+        else:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
         self._worker_dir = self.base_dir / self.WORKERS_DIR / uuid4().hex
         self._compressor = None
         self._decompressor = None
         self._s3_dir = None
         self._input_dir = None
         self._output_dir = None
+        self._base_key = None
+        self._base_url = None
 
     def cleanup(self):
         if self._worker_dir:
@@ -49,6 +51,22 @@ class FileTransfer(object):
             except OSError:
                 raise ValueError('Could not clean up temporary directory: {}'.format(
                     self._worker_dir))
+
+    @property
+    def base_key(self):
+        if not self._base_key:
+            self._base_key = '/'.join([str(id) for id in self.ids])
+        return self._base_key
+
+    @property
+    def base_url(self):
+        if not self._base_url:
+            self._base_url = '{protocol}://{base_dir}{bucket}'.format(
+                protocol='s3' if self.use_s3 else 'file',
+                base_dir='' if self.use_s3 else '{}//'.format(self.s3_dir),
+                bucket=self.bucket
+            )
+        return self._base_url
 
     @property
     def base_dir(self):
@@ -87,17 +105,53 @@ class FileTransfer(object):
             self._decompressor = ZstdDecompressor()
         return self._decompressor
 
-    def store_payload(self, bucket, unique_id, payload, tmpdir=None):
-        key = '{}/{}'.format(unique_id, self.PAYLOAD)
-        url = '{protocol}://{base_dir}{bucket}/{key}'.format(
-            protocol='s3' if self._use_s3 else 'file',
-            base_dir='' if self._use_s3 else '{}//'.format(self.s3_dir),
-            bucket=bucket,
-            key=key
-        )
-        s3io = S3IO(self._use_s3, str(self.s3_dir))
-        s3io.put_bytes(bucket, key, dumps(self.pack(payload)))
-        return url
+    def _parse_params(self, base_dir, use_s3, bucket, ids):
+        if not isinstance(bucket, str):
+            raise ValueError('`bucket` required')
+        if not isinstance(ids, (list, tuple)):
+            raise ValueError('`ids` required')
+        self.use_s3 = use_s3
+        self.bucket = bucket
+        self.ids = ids
+        if not use_s3:
+            if base_dir:
+                self._base_dir = Path(base_dir)
+            else:
+                raise ValueError('`base_dir` required when using s3-file')
+
+
+    def _parse_url(self, url):
+        parsed = urlparse(url)
+        self.use_s3 = parsed.scheme == 's3'
+        path = parsed.path
+        if not self.use_s3:
+            # Double shash expected, else an exception will raise
+            tmpdir, path = path.split('//')
+            self._base_dir = Path(tmpdir)
+            # FileTransfer base dir should be one level down from the S3 subdir
+            if self._base_dir.stem == FileTransfer.S3_DIR:
+                self._base_dir = self._base_dir.parent
+            path = Path(path)
+            self.bucket = path.parts[0]
+            self._path = path.relative_to(self.bucket)
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.bucket = parsed.netloc
+            self._path = Path(path.lstrip('/'))
+        self.ids = self._path.parts
+        if str(self.ids[-1]) == self.PAYLOAD:
+            self.ids = self.ids[:-1]
+
+    def fetch_payload(self):
+        s3io = S3IO(self.use_s3, str(self.s3_dir))
+        payload_key = '/'.join([str(id) for id in self.ids] + [self.PAYLOAD])
+        return loads(s3io.get_bytes(self.bucket, payload_key))
+
+    def store_payload(self, payload, sub_id=None):
+        key = '{}{}/{}'.format(self.base_key, '/{}'.format(sub_id) if sub_id else '', self.PAYLOAD)
+        s3io = S3IO(self.use_s3, str(self.s3_dir))
+        s3io.put_bytes(self.bucket, key, dumps(self.pack(payload)))
+        return '{}/{}'.format(self.base_url, key)
 
     def pack(self, data):
         '''Recursively pack serialise data, pulling data from local files.

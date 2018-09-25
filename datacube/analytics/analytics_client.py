@@ -112,8 +112,9 @@ class AnalyticsClient(object):
         }
         if tmpdir:
             tmpdir = Path(tmpdir) / unique_id
-        file_transfer = FileTransfer(tmpdir, self._use_s3)
-        url = file_transfer.store_payload(self._user_bucket, unique_id, payload)
+        file_transfer = FileTransfer(base_dir=tmpdir, use_s3=self._use_s3,
+                                     bucket=self._user_bucket, ids=[unique_id])
+        url = file_transfer.store_payload(payload)
         analysis = self._run_python_function_base(url)
         jro = JobResult(*analysis, client=self, paths=paths, env=env)
         jro.checkForUpdate(check_period, start_time)
