@@ -25,8 +25,9 @@ class TestJRO(object):
 
     def test_job_result(self):
         jro = JobResult(
-            {'id': 9},
-            {'id': 99, 'results': {'Hello': {
+            {'id': 9, 'request_id': 'abcdef12345'},
+            {'id': 99, 'request_id': 'abcdef12345', 'results': {'Hello': {
+                'request_id': 'abcdef12345',
                 'id': 999,
                 'type': ResultTypes.S3IO,
                 'load_type': LoadType.EAGER,
@@ -44,7 +45,8 @@ class TestJRO(object):
         assert jro.results.status is None
         assert jro.user_data is None
         assert jro.status == JobStatuses.RUNNING
-        assert jro.__repr__() == '''{ 'job': {'id': 9, 'status': None},
+        print(jro.__repr__())
+        assert jro.__repr__() == '''{ 'job': {'id': 9, 'request_id': 'abcdef12345', 'status': None},
   'results': { 'datasets': { 'Hello': { 'base_name': 'test',
                                         'bucket': 'test_bucket',
                                         'chunk': (1, 200, 200),
@@ -56,7 +58,7 @@ class TestJRO(object):
         # Job
         job = jro.job
         assert job.status is None
-        assert job.__repr__() == '''{'id': 9, 'status': None}'''
+        assert job.__repr__() == '''{'id': 9, 'request_id': 'abcdef12345', 'status': None}'''
         assert job.id == 9
         # Empty methods
         job.cancel()
