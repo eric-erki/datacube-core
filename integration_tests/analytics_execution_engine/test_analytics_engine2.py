@@ -16,8 +16,6 @@ from pprint import pformat
 import pytest
 from celery import Celery
 import numpy as np
-import boto3
-from boto3.s3.transfer import TransferConfig
 
 from datacube.engine_common.store_handler import StoreHandler, JobStatuses
 from datacube.analytics.analytics_worker import launch_ae_worker, stop_worker, run_python_function_base
@@ -114,10 +112,8 @@ def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base
 
     test_callback(jro, logger)
 
-    for datum in jro.user_data:
-        # Onus is on end user to clean output files copied locally
-        if 'base_dir' in datum:
-            rmtree(datum['base_dir'])
+    # Clean up S3 and local filesystem
+    client.cleanup(jro)
 
     logger.debug('{sep} Completed {} {sep}'.format(test_name, sep='='*20))
 
@@ -151,36 +147,14 @@ def check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, 
 
     def test_callback(jro, logger):
         '''Check user data retrieval.'''
-        use_s3 = local_config.execution_engine_config['use_s3']
-        if use_s3:
-            s3 = boto3.client('s3')
-            transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
-                                             multipart_threshold=8*1024*1024,
-                                             max_concurrency=10)
-            to_delete = {}
         user_data = jro.user_data
         for datum in user_data:
-            assert filename in datum
-            if use_s3:
-                # Download the files from s3 and into the temp directory
-                parsed = urlparse(datum[filename])
-                bucket = parsed.netloc
-                key = parsed.path.lstrip('/')
-                filepath = Path(tmpdir) / key
-                filepath.parent.mkdir(parents=True, exist_ok=True)
-                s3.download_file(bucket, key, str(filepath), Config=transfer_config)
-                if bucket not in to_delete:
-                    to_delete[bucket] = []
-                to_delete[bucket].append({'Key': key})
-            else:
-                # If not using s3, the files would have been de-archived in the temp directory
-                filepath = urlparse(datum[filename]).path
-            with Path(filepath).open() as fh:
-                assert fh.read() == text
-        if use_s3:
-            # Clean up after ourselves, as a single call for performance
-            for bucket, objects in to_delete.items():
-                s3.delete_objects(Bucket=bucket, Delete={'Objects': objects, 'Quiet': True})
+            filepath = None
+            for key, value in datum.items():
+                if key == 'files':
+                    for filepath in value.values():
+                        with Path(filepath).open() as fh:
+                            assert fh.read() == text
 
     _submit('check_submit_user_data', tmpdir, store_handler, local_config, celery_enabled,
             base_function, test_callback,
@@ -354,39 +328,20 @@ def check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enab
             (146.33783807400005, 146.35879447800005, -35.41324290999995, -35.393512105999946)
         ]
         extents = {}
-        use_s3 = local_config.execution_engine_config['use_s3']
-        if use_s3:
-            s3 = boto3.client('s3')
-            transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
-                                             multipart_threshold=8*1024*1024,
-                                             max_concurrency=10)
-            to_delete = {}
         user_data = jro.user_data
         logger.debug('JRO User data:\n{}'.format(pformat(user_data)))
         for datum in user_data:
             feature_no = None
             exts = None
+            filepath = None
             for key, value in datum.items():
                 if key == 'output':
                     exts = value
-                elif key[:15] == 'sub_dir/feature':
-                    feature_no = int(key[15:17])
-                    if use_s3:
-                        # Download the file from s3 and into the temp directory
-                        parsed = urlparse(value)
-                        bucket = parsed.netloc
-                        key = parsed.path.lstrip('/')
-                        filepath = Path(tmpdir) / key
-                        filepath.parent.mkdir(parents=True, exist_ok=True)
-                        s3.download_file(bucket, key, str(filepath), Config=transfer_config)
-                        if bucket not in to_delete:
-                            to_delete[bucket] = []
-                        to_delete[bucket].append({'Key': key})
-                    else:
-                        # If not using s3, the files would have been de-archived in the temp directory
-                        filepath = urlparse(value).path
-                elif key == 'base_dir' and not use_s3:
-                    continue
+                elif key == 'files':
+                    for name, path in value.items():
+                        if name[:15] == 'sub_dir/feature':
+                            feature_no = int(name[15:17])
+                            filepath = path
                 else:
                     raise Exception('Unexpected user data: {}: {}'.format(key, value))
             with Path(filepath).open() as fh:
@@ -395,11 +350,6 @@ def check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enab
         for feature_no, expected_extent in enumerate(expected_extents):
             assert feature_no in extents
             assert extents[feature_no] == expected_extent
-
-        # if use_s3:
-        #     # Clean up after ourselves, as a single call for performance
-        #     for bucket, objects in to_delete.items():
-        #         s3.delete_objects(Bucket=bucket, Delete={'Objects': objects, 'Quiet': True})
 
     _submit('check_submit_job_user_tasks',
             tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,

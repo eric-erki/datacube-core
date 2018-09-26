@@ -42,6 +42,9 @@ class ExecutionEngineV2(Worker):
 
     def __init__(self, name, params_url):
         super().__init__(name, WorkerTypes.EXECUTION, params_url)
+        # Unpack input and job params
+        self._job_params = self._file_transfer.unpack(self._job_params)
+        self._input_params = self._file_transfer.unpack(self._input_params)
         self._result_type = ResultTypes.S3IO if self._use_s3 else ResultTypes.FILE
 
     def _analyse(self, function, data, storage_params, *args, **kwargs):
@@ -64,17 +67,7 @@ class ExecutionEngineV2(Worker):
 
     def _compute_result(self, function, data, function_params=None, user_task=None):
         '''Run the function on the data.'''
-        # TODO: restore function according to its type
-        func = self._file_transfer.deserialise(function)
-        return func(data, self._datacube, function_params, user_task)
-
-    def _save_array_in_s3(self, array, base_name, chunk_id):
-        '''Saves a single `xarray.DataArray` to s3/s3-file storage'''
-        s3_key = '_'.join([base_name, str(chunk_id)])
-        data = self._file_transfer.compress_array(array)
-        s3io = S3IO(self._use_s3, str(self._file_transfer.s3_dir))
-        s3io.put_bytes(self._result_bucket, s3_key, data, True)
-        return s3_key
+        return function(data, self._datacube, function_params, user_task)
 
     def _save_array(self, base_job_id, job, output_name, band_name, array, chunk):
         '''Save a single array to s3 and its metadata in the store.
@@ -103,68 +96,33 @@ class ExecutionEngineV2(Worker):
         # Add newly created ID to the descriptor and update in store
         result_meta.descriptor['id'] = result_id
         self._store.update_result(result_id, result_meta)
-        s3_key = self._save_array_in_s3(array, base_name, job['chunk_id'])
+        s3_key = self._file_transfer.store_array(array, base_name, job['chunk_id'])
         self.logger.debug('New result (id:%d) metadata stored to s3://%s/%s: %s',
                           result_id, self._result_bucket, s3_key, result_meta.descriptor)
 
     def pre_process(self, job):
+        '''Copy user data into job descriptor.
+
+        Function parameters and users tasks are only saved in the
+        original input params S3 payload, so we copy them across into
+        the job dictionary so they can be used during exectution.
+        '''
         job['function_params'] = {}
         if 'function_params' in self._input_params and self._input_params['function_params']:
             job['function_params'] = self._input_params['function_params']
-        # if self._use_s3:
-        #     s3io = S3IO(self._use_s3, self._output_dir)
-        #     job['function_params'] = loads(s3io.get_bytes(self._result_bucket,
-        #                                                   str(self._file_transfer.param_dir /
-        #                                                       job['function_params']).lstrip('/')))
-        #     # print('@'*60, str(self._file_transfer.param_dir /
-        #     #       job['function_params']).lstrip('/'), job['function_params'])
-        # else:
-        #     job['function_params'] = self._store.get_function_params(job['function_params'])
-        # if 'function_params' not in job or job['function_params'] is None:
-        #     job['function_params'] = {}
         if 'user_task' not in job or job['user_task'] is None:
             job['user_task'] = {}
         job['function_params']['input_dir'] = str(self._file_transfer.input_dir)
         job['function_params']['output_dir'] = str(self._file_transfer.output_dir)
 
-        # Uncompress and populate input directory input args
-        for key, value in job['function_params'].items():
-            if not isinstance(value, dict):
-                continue
-            if 'copy_to_input_dir' not in value or not value['copy_to_input_dir']:
-                continue
-            filepath = self._file_transfer.decompress_to_file(value['data'], value['fname'])
-            job['function_params'][key] = filepath
-
     # pylint: disable=too-many-locals
     def post_process(self, job, user_data):
-        job_id = job['id']
         output_files = {}
-        if self._use_s3:
-            s3_bucket = self._result_bucket
-            s3 = boto3.client('s3')
-            transfer_config = TransferConfig(multipart_chunksize=8*1024*1024,
-                                             multipart_threshold=8*1024*1024,
-                                             max_concurrency=10)
-            for filepath in self._file_transfer.output_dir.rglob('*'):
-                if filepath.is_file():
-                    relpath = str(filepath.relative_to(self._file_transfer.output_dir))
-                    s3_key = self._request_id + str(filepath)
-                    s3.upload_file(str(filepath), s3_bucket, s3_key, Config=transfer_config)
-                    output_files[relpath] = 's3://{}/{}'.format(s3_bucket, s3_key)
-        else:
-            # Last resort: store the whole output folder as compressed archive in redis
-            archive = self._file_transfer.get_archive()
-            if archive:
-                output_files[FileTransfer.ARCHIVE] = archive
-
-        # Clean up base directory
-        self._file_transfer.cleanup()
-
-        # store & return output metadata dict
-        user_data.update(output_files)
-        self._store.set_user_data(job_id, user_data)
-        return {'output_files': output_files}
+        for filepath in self._file_transfer.output_dir.rglob('*'):
+            if filepath.is_file():
+                relpath = str(filepath.relative_to(self._file_transfer.output_dir))
+                output_files[relpath] = filepath.as_uri()
+        return output_files
 
     def execute(self):
         '''Start the job, save results, then set it as completed.'''
@@ -211,6 +169,11 @@ class ExecutionEngineV2(Worker):
         else:
             user_data['output'] = computed
 
-        self.post_process(job, user_data)
+        user_data['files'] = self.post_process(job, user_data)
+        url = self._file_transfer.store_payload(user_data, 'OUTPUT')
+        self._store.set_user_data(job['id'], url)
+        # Remove payload from S3
+        self._file_transfer.delete([self._params_url])
+
         self.job_finishes(job, JobStatuses.COMPLETED)
         self.logger.info('Completed execution of subjob %d', job['id'])

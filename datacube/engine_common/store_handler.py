@@ -444,11 +444,7 @@ class StoreHandler(object):
         '''
         if user_data is None:
             self._store.delete(self._make_key(self.K_USER_DATA, str(job_id)))
-        elif not isinstance(user_data, dict):
-            raise ValueError('Invalid user data type ({}). It must be a dictionary.'
-                             .format(type(user_data)))
-        else:
-            self._set_item(self.K_USER_DATA, job_id, user_data)
+        self._set_item(self.K_USER_DATA, job_id, user_data)
 
     def get_user_data(self, job_id):
         '''Get a job's user data, a list of dictionaries.

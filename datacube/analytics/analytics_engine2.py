@@ -61,7 +61,6 @@ class AnalyticsEngineV2(Worker):
                - status
         '''
         function = self._input_params['function']
-        function_params = self._input_params['function_params']
         data = self._input_params['data'] if 'data' in self._input_params else None
         user_tasks = self._input_params['user_tasks'] if 'user_tasks' in self._input_params else None
         args = self._input_params['args'] if 'args' in self._input_params else None
@@ -77,7 +76,7 @@ class AnalyticsEngineV2(Worker):
         if data and 'storage_params' in data:
             storage.update(data['storage_params'])
         function_type = self._determine_function_type(function)
-        decomposed = self._decompose(function_type, function, query, function_params, storage, user_tasks)
+        decomposed = self._decompose(function_type, function, query, storage, user_tasks)
         if logging.getLevelName(self.logger.getEffectiveLevel()) == 'DEBUG':
             self.logger.debug('Decomposed\n%s', pformat(decomposed, indent=4))
 
@@ -91,7 +90,7 @@ class AnalyticsEngineV2(Worker):
         # code)
         return FunctionTypes.PICKLED
 
-    def _decompose(self, function_type, function, data, function_params, storage_params, user_tasks):
+    def _decompose(self, function_type, function, data, storage_params, user_tasks):
         '''Decompose the function and data.
 
         The decomposition of function over data creates one or more jobs. Each job has its own
@@ -99,10 +98,8 @@ class AnalyticsEngineV2(Worker):
         returns a dictionary describing the base job and the list of decomposed jobs, each with
         their ids as required.
         '''
-        # Prepare the sub-jobs and base job info
-        function_params_id = sha512(dumps(function_params)).hexdigest()
         # todo: reserve key in redis here
-        jobs, urls = self._create_jobs(function, data, function_params_id, storage_params, user_tasks)
+        jobs, urls = self._create_jobs(function, data, storage_params, user_tasks)
         base = self._create_base_job(function_type, function, data, storage_params, user_tasks, jobs)
         return {
             'base': base,
@@ -149,10 +146,10 @@ class AnalyticsEngineV2(Worker):
         self._store_job(job, dependent_job_ids)
         return job
 
-    def _create_jobs(self, function, data, function_params, storage_params, user_tasks):
+    def _create_jobs(self, function, data, storage_params, user_tasks):
         '''Decompose data and function into a list of jobs.'''
         urls = []
-        jobs = self._decompose_function(function, data, function_params, storage_params, user_tasks)
+        jobs = self._decompose_function(function, data, storage_params, user_tasks)
         for job in jobs:
             # Store and modify job in place to add store ids
             self._store_job(job)
@@ -184,7 +181,7 @@ class AnalyticsEngineV2(Worker):
             decomposed_data[name] = decomposed_item
         return decomposed_data
 
-    def _decompose_function(self, function, data, function_params, storage_params, user_tasks):
+    def _decompose_function(self, function, data, storage_params, user_tasks):
         '''Decompose a function and data into a list of jobs.'''
         sub_jobs = []
         if user_tasks is not None:
@@ -194,7 +191,6 @@ class AnalyticsEngineV2(Worker):
                     'function': function,
                     'user_task': user_task,
                     'data': None,
-                    'function_params': function_params,
                     'slice': None,
                     'chunk_id': None
                 }
@@ -213,7 +209,6 @@ class AnalyticsEngineV2(Worker):
                     'function': function,
                     'user_tasks': None,
                     'data': job_data,
-                    'function_params': function_params,
                     'slice': s,
                     'position': position,
                     'total_cells': max(positions),
@@ -225,9 +220,11 @@ class AnalyticsEngineV2(Worker):
     def _get_jro_params(self, job):
         '''Create the parameters allowing to create a JobResult.'''
         job_descriptor = {
+            'request_id': self._request_id,
             'id': job['id']
             }
         result_descriptor = {
+            'request_id': self._request_id,
             'id': None,
             'results': {}
         }

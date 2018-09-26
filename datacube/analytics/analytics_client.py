@@ -61,6 +61,9 @@ class AnalyticsClient(object):
         self._store = StoreHandler(**config.redis_config)
         self._use_s3 = config.execution_engine_config['use_s3']
         self._user_bucket = config.execution_engine_config['user_bucket']
+        self._system_bucket = config.execution_engine_config['result_bucket']
+        # Track urls of submitted jobs, to be able to delete payloads in S3
+        self._urls = {}
 
         # global app
         app.conf.update(result_backend=config.redis_celery_config['url'],
@@ -115,10 +118,16 @@ class AnalyticsClient(object):
         file_transfer = FileTransfer(base_dir=tmpdir, use_s3=self._use_s3,
                                      bucket=self._user_bucket, ids=[unique_id])
         url = file_transfer.store_payload(payload)
-        analysis = self._run_python_function_base(url)
-        jro = JobResult(*analysis, client=self, paths=paths, env=env)
-        jro.checkForUpdate(check_period, start_time)
-        return jro
+        try:
+            analysis = self._run_python_function_base(url)
+            jro = JobResult(*analysis, client=self, paths=paths, env=env)
+            jro.checkForUpdate(check_period, start_time)
+            self._urls[unique_id] = url
+            return jro
+        except Exception:
+            # Delete payload from S3 on exception
+            file_transfer.delete([url])
+            raise
 
     def _run_python_function_base(self, url):
         '''Run the function using celery.
@@ -206,3 +215,19 @@ class AnalyticsClient(object):
         active = app.control.inspect().active()
         workers = [task['name'].split('.')[-1] for task in active.popitem()[1]] if active else []
         return 'Analytics client: {} active workers: {}'.format(len(workers), workers)
+
+    def cleanup(self, jro):
+        '''Clean up S3 payloads based on the jro data.
+
+        Only the request ID is used to identify the payload to
+        clean. Returns the number of objects deleted from S3.
+        '''
+        deleted = 0
+        if jro.job.request_id in self._urls:
+            url = self._urls[jro.job.request_id]
+            file_transfer = FileTransfer(url=url)
+            file_transfer.cleanup()
+            deleted = file_transfer.delete([url])
+            # TODO: For now, allow to delete from the system bucket
+            #deleted += file_transfer.cleanup([self._system_bucket, self._user_bucket])
+        return deleted

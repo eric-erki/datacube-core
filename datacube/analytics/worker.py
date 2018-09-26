@@ -28,15 +28,16 @@ class Worker(object):
         self._request_id = self._file_transfer.ids[0]
         self._sub_id = self._file_transfer.ids[1] if len(self._file_transfer.ids) > 1 else None
 
-        # Fetch data from S3
-        data = self._file_transfer.fetch_payload()
+        # Fetch data from S3: do not unpack it by default, as not all
+        # workers need everything, so we can save some time
+        data = self._file_transfer.fetch_payload(False)
         # Sub-job data?
         if 'job' in data:
             self._job_params = data['job']
             # Now fetch function params from S3
             params_url = data['params_url'].lstrip('URL:')
             file_transfer2 = FileTransfer(url=params_url)
-            self._input_params = file_transfer2.fetch_payload()
+            self._input_params = file_transfer2.fetch_payload(False)
         else:
             self._input_params = data
 
@@ -49,6 +50,8 @@ class Worker(object):
         self._store = StoreWorkers(**config.redis_config)
         self._ee_config = config.execution_engine_config
         self._result_bucket = self._ee_config['result_bucket']
+        # Worker should only produce output in the result_bucket
+        self._file_transfer.bucket = self._ee_config['result_bucket']
         self._id = self._store.add_worker(WorkerMetadata(name, worker_type, time()),
                                           WorkerStatuses.ALIVE)
 

@@ -147,11 +147,13 @@ class Job(object):
     def __init__(self, jro, job_info):
         self._jro = jro
         self._job_info = job_info
+        self._request_id = self._job_info['request_id']
         self._id = self._job_info['id']
         # unpack other required info
 
     def to_dict(self):
         return {
+            'request_id': self._request_id,
             'id': self._id,
             'status': self.status
         }
@@ -167,6 +169,12 @@ class Job(object):
         """id of the job
         """
         return self._id
+
+    @property
+    def request_id(self):
+        """request id of the job
+        """
+        return self._request_id
 
     @property
     def status(self):
@@ -595,6 +603,7 @@ class Results(object):
         self._result_info = result_info
         self._datasets = Dotify({})
         # unpack result_info and popular internal variables
+        self._request_id = self._result_info['request_id']
         self._id = self._result_info['id']
         for k, v in self._result_info['results'].items():
             self._add_array(k, v)
@@ -619,6 +628,12 @@ class Results(object):
         """id of the result
         """
         return self._id
+
+    @property
+    def request_id(self):
+        """request id of the results
+        """
+        return self._request_id
 
     @property
     def datasets(self):
@@ -715,12 +730,15 @@ class UserData(object):
         '''Fetch the user data from the server.'''
         if not self._user_data:
             if self._jro.job.status == JobStatuses.COMPLETED and self._jro.client:
-                self._user_data = self._jro.client.get_user_data(self.job_id, self._jro._paths, self._jro._env)
-                for datum in self._user_data:
-                    if FileTransfer.ARCHIVE in datum:
-                        # Restore archive to a local temp dir and update user_data file entries
-                        file_transfer = FileTransfer(base_dir=mkdtemp(), use_s3=False, bucket='', ids=[])
-                        restored = file_transfer.restore_archive(datum[FileTransfer.ARCHIVE])
-                        datum.update(restored)
-                        del datum[FileTransfer.ARCHIVE]
+                store_user_data = self._jro.client.get_user_data(self.job_id, self._jro._paths, self._jro._env)
+                user_data = []
+                to_delete = []
+                for datum in store_user_data:
+                    file_transfer = FileTransfer(url=datum)
+                    user_data.append(file_transfer.fetch_payload())
+                    to_delete.append(datum)
+                # Clean up S3 now, re-using the last used file transfer object
+                if to_delete:
+                    file_transfer.delete(to_delete)
+                self._user_data = user_data
         return self._user_data

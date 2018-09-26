@@ -498,16 +498,6 @@ def test_get_result_progress(store_handler, user_data):
         store_handler.get_result_progress('Hello')
 
 
-def test_set_user_data_invalid(store_handler):
-    '''Test the setting of user data with invalid parameters.'''
-    store_handler._store.flushdb()
-    # Invalid user data: not a dict
-    with pytest.raises(ValueError):
-        store_handler.set_user_data(1, 'Hello')
-    with pytest.raises(ValueError):
-        store_handler.set_user_data(1, 2)
-
-
 def test_set_user_data(store_handler, user_data):
     '''Test job dependencies addition and retrieval.'''
     expected_jobs, expected_results = create_store_data(store_handler, user_data)

@@ -15,6 +15,8 @@ from dill import dumps
 from datacube.engine_common.pickle_utils import dumps as dc_dumps
 from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
+# TODO: Split this class
+# pylint: disable=too-many-public-methods
 class FileTransfer(object):
     PAYLOAD = 'payload.bin'
 
@@ -25,13 +27,18 @@ class FileTransfer(object):
     OUTPUT_DIR = 'output'
     S3_DIR = 's3'
 
+    FUNCTION_NAME = '__ft_function_name__'
+    FILE_NAME = '__ft_file_name__'
+    FILE_COPY = '__ft_copy_to_input_dir__'
+    DATA = '__ft_data__'
+
     def __init__(self, url=None, base_dir=None, use_s3=False, bucket=None, ids=None):
         if url:
-            self._parse_url(url)
+            self._init_from_url(url)
         else:
-            self._parse_params(base_dir, use_s3, bucket, ids)
+            self._init_from_params(base_dir, use_s3, bucket, ids)
         if self.use_s3:
-            self._base_dir = Path('/')
+            self._base_dir = Path(mkdtemp())
         else:
             self._base_dir.mkdir(parents=True, exist_ok=True)
         self._worker_dir = self.base_dir / self.WORKERS_DIR / uuid4().hex
@@ -43,14 +50,47 @@ class FileTransfer(object):
         self._base_key = None
         self._base_url = None
 
-    def cleanup(self):
-        if self._worker_dir:
+    def cleanup(self, buckets=None):
+        '''Deletes the whole base directory, use with caution!.
+
+        The file transfer object becomes unusable after calling this
+        method.
+        '''
+        # Clean S3
+
+        # TODO: We allow to clean other buckets for now, because the
+        # workers do not know when the client is finished working with
+        # the data.
+        buckets = buckets or [self.bucket]
+        s3io = S3IO(self.use_s3, str(self.s3_dir))
+        deleted = 0
+        for bucket in buckets:
+            keys = s3io.list_objects(bucket, self.ids[0], max_keys=1000)
+            if keys:
+                deleted += len(s3io.delete_objects(bucket, keys))
+
+        # Clean local file system
+        if self.base_dir:
             try:
-                rmtree(str(self._worker_dir), ignore_errors=True)
-                self._base_dir = None
+                rmtree(str(self.base_dir), ignore_errors=True)
             except OSError:
                 raise ValueError('Could not clean up temporary directory: {}'.format(
-                    self._worker_dir))
+                    self.base_dir))
+        return deleted
+
+    def delete(self, urls):
+        '''Returns the number of objects deleted from S3.'''
+        to_delete = {}
+        for url in urls:
+            use_s3, base_dir, bucket, path, ids = self._parse_url(url)
+            if bucket not in to_delete:
+                to_delete[bucket] = []
+            to_delete[bucket].append(str(path))
+        s3io = S3IO(self.use_s3, str(self.s3_dir))
+        deleted = 0
+        for bucket, keys in to_delete.items():
+            deleted += len(s3io.delete_objects(bucket, keys))
+        return deleted
 
     @property
     def base_key(self):
@@ -105,7 +145,34 @@ class FileTransfer(object):
             self._decompressor = ZstdDecompressor()
         return self._decompressor
 
-    def _parse_params(self, base_dir, use_s3, bucket, ids):
+    def _parse_url(self, url):
+        parsed = urlparse(url)
+        use_s3 = parsed.scheme == 's3'
+        path = parsed.path
+        if not use_s3:
+            # Double shash expected, else an exception will raise
+            tmpdir, path = path.split('//')
+            base_dir = Path(tmpdir)
+            # FileTransfer base dir should be one level down from the S3 subdir
+            if base_dir.stem == FileTransfer.S3_DIR:
+                base_dir = base_dir.parent
+            path = Path(path)
+            bucket = path.parts[0]
+            path = path.relative_to(bucket)
+            base_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            bucket = parsed.netloc
+            path = Path(path.lstrip('/'))
+            base_dir = None
+        ids = path.parts
+        if str(ids[-1]) == self.PAYLOAD:
+            ids = ids[:-1]
+        return use_s3, base_dir, bucket, path, ids
+
+    def _init_from_url(self, url):
+        self.use_s3, self._base_dir, self.bucket, self._path, self.ids = self._parse_url(url)
+
+    def _init_from_params(self, base_dir, use_s3, bucket, ids):
         if not isinstance(bucket, str):
             raise ValueError('`bucket` required')
         if not isinstance(ids, (list, tuple)):
@@ -119,33 +186,11 @@ class FileTransfer(object):
             else:
                 raise ValueError('`base_dir` required when using s3-file')
 
-
-    def _parse_url(self, url):
-        parsed = urlparse(url)
-        self.use_s3 = parsed.scheme == 's3'
-        path = parsed.path
-        if not self.use_s3:
-            # Double shash expected, else an exception will raise
-            tmpdir, path = path.split('//')
-            self._base_dir = Path(tmpdir)
-            # FileTransfer base dir should be one level down from the S3 subdir
-            if self._base_dir.stem == FileTransfer.S3_DIR:
-                self._base_dir = self._base_dir.parent
-            path = Path(path)
-            self.bucket = path.parts[0]
-            self._path = path.relative_to(self.bucket)
-            self._base_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            self.bucket = parsed.netloc
-            self._path = Path(path.lstrip('/'))
-        self.ids = self._path.parts
-        if str(self.ids[-1]) == self.PAYLOAD:
-            self.ids = self.ids[:-1]
-
-    def fetch_payload(self):
+    def fetch_payload(self, unpack=True):
         s3io = S3IO(self.use_s3, str(self.s3_dir))
         payload_key = '/'.join([str(id) for id in self.ids] + [self.PAYLOAD])
-        return loads(s3io.get_bytes(self.bucket, payload_key))
+        payload = loads(s3io.get_bytes(self.bucket, payload_key))
+        return self.unpack(payload) if unpack else payload
 
     def store_payload(self, payload, sub_id=None):
         key = '{}{}/{}'.format(self.base_key, '/{}'.format(sub_id) if sub_id else '', self.PAYLOAD)
@@ -153,8 +198,16 @@ class FileTransfer(object):
         s3io.put_bytes(self.bucket, key, dumps(self.pack(payload)))
         return '{}/{}'.format(self.base_url, key)
 
+    def store_array(self, array, base_name, chunk_id):
+        '''Saves a single `xarray.DataArray` to s3/s3-file storage'''
+        s3_key = '_'.join([base_name, str(chunk_id)])
+        data = self.compress_array(array)
+        s3io = S3IO(self.use_s3, str(self.s3_dir))
+        s3io.put_bytes(self.bucket, s3_key, data, True)
+        return s3_key
+
     def pack(self, data):
-        '''Recursively pack serialise data, pulling data from local files.
+        '''Recursively pack data, pulling data from local files.
 
         Any file URL contained in a dictionary is replaced by the
         compressed data of the corresponding file, and stored into a sub-dict of the form:
@@ -165,7 +218,13 @@ class FileTransfer(object):
         }```
         '''
         if callable(data):
-            return self.serialise(data)
+            return {
+                self.FUNCTION_NAME: data.__name__,
+                self.DATA: self.serialise(data)
+            }
+        elif isinstance(data, (list, tuple)):
+            packed = [self.pack(val) for val in data]
+            return tuple(packed) if isinstance(data, tuple) else packed
         elif isinstance(data, dict):
             return {key: self.pack(val) for key, val in data.items()}
         elif isinstance(data, str):
@@ -175,11 +234,36 @@ class FileTransfer(object):
                 with filepath.open('rb') as fh:
                     contents = self.compress(fh.read())
                     return {
-                        'fname': filepath.name,
-                        'data': contents,
-                        'copy_to_input_dir': True
+                        self.FILE_NAME: filepath.name,
+                        self.DATA: contents,
+                        self.FILE_COPY: True
                     }
         # All other cases (incl. str that is not a file URL)
+        return data
+
+    def unpack(self, data):
+        '''Recursively unpack data, storing to local files.
+
+        Files are written to the local filesystem from decompressed
+        data, whenever a of the form is encourntered:
+        ```{
+            'fname': filename,
+            'data': byte data,
+            'copy_to_input_dir': True
+        }```
+        '''
+        if isinstance(data, dict):
+            if self.FUNCTION_NAME in data:
+                # Restore function
+                return self.deserialise(data[self.DATA])
+            elif self.FILE_NAME in data:
+                # Restore file data to filesytem
+                if self.FILE_COPY in data and data[self.FILE_COPY]:
+                    return self.decompress_to_file(data[self.DATA], data[self.FILE_NAME])
+            return {key: self.unpack(val) for key, val in data.items()}
+        elif isinstance(data, (list, tuple)):
+            packed = [self.unpack(val) for val in data]
+            return tuple(packed) if isinstance(data, tuple) else packed
         return data
 
     def compress(self, data):

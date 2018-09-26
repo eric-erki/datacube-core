@@ -22,12 +22,12 @@ def test_invalid_item_id(local_config):
         client.get_result('Invalid')
 
     # Invalid status for Job
-    job = Job(None, {'id': 'Invalid'})
+    job = Job(None, {'id': 'Invalid', 'request_id': 'Invalid'})
     with pytest.raises(ValueError):
         client.get_status(job)
 
     # Invalid status for Results
-    results = Results(None, {'id': 'Invalid', 'results': {}})
+    results = Results(None, {'id': 'Invalid', 'request_id': 'Invalid', 'results': {}})
     with pytest.raises(ValueError):
         client.get_status(results)
 

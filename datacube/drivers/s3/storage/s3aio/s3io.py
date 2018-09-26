@@ -170,11 +170,15 @@ class S3IO(object):
                 error_code = int(e.response['Error']['Code'])
                 raise Exception("ClientError", error_code)
         else:
-            directory = self.file_path + "/" + str(s3_bucket)
-            if os.path.exists(directory):
-                return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+            directory = Path(self.file_path) / s3_bucket
+            if directory.exists():
+                if prefix != '':
+                    prefix += '/'
+                return [str(path.relative_to(directory))
+                        for path in directory.glob('{}**/*'.format(prefix))
+                        if path.is_file()]
             else:
-                return None
+                return []
 
     def delete_objects(self, s3_bucket, keys, new_session=False):
         """Delete S3 objects.
@@ -196,12 +200,21 @@ class S3IO(object):
                     response['ResponseMetadata']['HTTPStatusCode'] == 200 and 'Deleted' in response:
                 return [d['Key'] for d in response['Deleted']]
         else:
-            directory = self.file_path + "/" + str(s3_bucket)
+            directory = Path(self.file_path) / s3_bucket
             response = []
             for k in keys:
-                if os.path.exists(directory + "/" + k) and os.path.isfile(directory + "/" + k):
-                    os.remove(directory + "/" + k)
+                filepath = directory / k
+                if filepath.exists() and filepath.is_file():
+                    filepath.unlink()
                     response.append(k)
+                    # Delete empty directories if any, mimicking S3 behaviour
+                    parent = filepath.parent
+                    while not list(parent.iterdir()):
+                        parent.rmdir()
+                        # Exit if we ever reach the root
+                        if parent.parent == parent:
+                            break
+                        parent = parent.parent
             return response
         return []
 
