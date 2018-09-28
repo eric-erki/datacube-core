@@ -46,6 +46,7 @@ redis_celery.db: 1
 execution_engine.user_bucket: eetest2-user
 execution_engine.result_bucket: eetest2-system
 execution_engine.use_s3: False
+execution_engine.rpc: celery
 
 [user]
 # Which environment to use when none is specified explicitly.
@@ -171,7 +172,8 @@ class LocalConfig(object):
         return {
             'user_bucket': self.get('execution_engine.user_bucket'),
             'result_bucket': self.get('execution_engine.result_bucket'),
-            'use_s3': self.get('execution_engine.use_s3') == 'True'
+            'use_s3': self.get('execution_engine.use_s3') == 'True',
+            'rpc': self.get('execution_engine.rpc')
         }
 
     @property

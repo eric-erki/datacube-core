@@ -4,7 +4,8 @@ from __future__ import absolute_import
 
 import logging
 import pytest
-from datacube.analytics.analytics_client import celery_app, app, AnalyticsClient
+from datacube.engine_common.rpc_celery import celery_app, app
+from datacube.analytics.analytics_client import AnalyticsClient
 from datacube.analytics.job_result import Job, Results
 
 

@@ -29,7 +29,7 @@ extras_require = {
 # An 'all' option, following ipython naming conventions.
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
-extra_plugins = dict(read=[], write=[], index=[])
+extra_plugins = dict(read=[], write=[], index=[], rpc=[])
 
 if os.name != 'nt':
     extra_plugins['read'].extend([
@@ -40,7 +40,6 @@ if os.name != 'nt':
         's3aio = datacube.drivers.s3.driver:writer_driver_init [s3]',
         's3aio_test = datacube.drivers.s3.driver:writer_test_driver_init [s3]',
     ])
-
     extra_plugins['index'].extend([
         's3aio_index = datacube.drivers.s3aio_index:index_driver_init [s3]',
     ])
@@ -137,6 +136,10 @@ setup(
         'datacube.plugins.index': [
             'default = datacube.index.index:index_driver_init',
             *extra_plugins['index'],
+        ],
+        'datacube.plugins.rpc': [
+            'celery = datacube.engine_common.rpc_celery:make_rpc [celery]',
+            *extra_plugins['rpc'],
         ],
     },
 )

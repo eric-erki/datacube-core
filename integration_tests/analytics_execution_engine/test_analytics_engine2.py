@@ -18,7 +18,7 @@ from celery import Celery
 import numpy as np
 
 from datacube.engine_common.store_handler import StoreHandler, JobStatuses
-from datacube.analytics.analytics_worker import launch_ae_worker, stop_worker, run_python_function_base
+from datacube.engine_common.rpc_celery import launch_ae_worker, stop_worker, run_python_function_base
 from datacube.analytics.analytics_client import AnalyticsClient
 from datacube.analytics.update_engine2 import UpdateEngineV2, UpdateActions
 from datacube.api.core import Datacube

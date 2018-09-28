@@ -3,54 +3,24 @@ submitting jobs in a cluster and receiving job result objects in return.'''
 
 from __future__ import absolute_import
 
-import os
 import logging
-from time import sleep, monotonic
+from time import monotonic
 from pathlib import Path
 from uuid import uuid4
-from celery import Celery
-from redis.exceptions import TimeoutError
-from dill import dumps
 
 from datacube.engine_common.store_handler import StoreHandler
 from datacube.engine_common.file_transfer import FileTransfer
 from .job_result import JobResult, Job, Results
 from .update_engine2 import UpdateActions
 from datacube.config import LocalConfig
-from datacube.compat import urlparse
-from datacube.drivers.s3.storage.s3aio.s3io import S3IO
 
-
-def celery_app(store_config=None):
-    try:
-        if store_config is None:
-            local_config = LocalConfig.find()
-            store_config = local_config.redis_celery_config
-        _app = Celery('ee_task', broker=store_config['url'], backend=store_config['url'])
-    except ValueError:
-        _app = Celery('ee_task')
-
-    _app.conf.update(
-        task_serializer='pickle',
-        result_serializer='pickle',
-        accept_content=['pickle'],
-        worker_prefetch_multiplier=1,
-        broker_pool_limit=100,
-        broker_connection_retry=True,
-        broker_connection_timeout=4,
-        broker_transport_options={'socket_keepalive': True, 'retry_on_timeout': True,
-                                  'socket_connect_timeout': 10, 'socket_timeout': 10},
-        redis_socket_connect_timeout=10,
-        redis_socket_timeout=10)
-    return _app
-
-
-# pylint: disable=invalid-name
-app = celery_app()
+from datacube.engine_common.rpc_manager import get_rpc
 
 
 class AnalyticsClient(object):
-    '''Analytics client allowing interaction with the back-end engine through celery.'''
+    '''Analytics client allowing interaction with the back-end engine
+    through a RPC.
+    '''
 
     def __init__(self, config):
         '''Initialise the client.
@@ -64,17 +34,14 @@ class AnalyticsClient(object):
         self._system_bucket = config.execution_engine_config['result_bucket']
         # Track urls of submitted jobs, to be able to delete payloads in S3
         self._urls = {}
-
-        # global app
-        app.conf.update(result_backend=config.redis_celery_config['url'],
-                        broker_url=config.redis_celery_config['url'])
+        self._rpc = get_rpc(config)
         self.logger.debug('Ready')
 
     # pylint: disable=too-many-locals
     def submit_python_function(self, function, function_params=None, data=None,
                                user_tasks=None, walltime='00:00:30', check_period=1, paths=None, env=None,
                                tmpdir=None, *args, **kwargs):
-        '''Submit a python function and data to the engine via celery.
+        '''Submit a python function and data to the engine via the rpc.
 
         :param function function: Python function to be executed by the engine.
         :param dict function_params: Shared parameters that will be passed to the function.
@@ -119,7 +86,7 @@ class AnalyticsClient(object):
                                      bucket=self._user_bucket, ids=[unique_id])
         url = file_transfer.store_payload(payload)
         try:
-            analysis = self._run_python_function_base(url)
+            analysis = self._rpc._run_python_function_base(url)
             jro = JobResult(*analysis, client=self, paths=paths, env=env)
             jro.checkForUpdate(check_period, start_time)
             self._urls[unique_id] = url
@@ -129,61 +96,6 @@ class AnalyticsClient(object):
             file_transfer.delete([url])
             raise
 
-    def _run_python_function_base(self, url):
-        '''Run the function using celery.
-
-        This is placed in a separate method so it can be overridden
-        during tests.
-        '''
-        analysis_p = app.send_task('datacube.analytics.analytics_worker.run_python_function_base',
-                                   args=(url,))
-        last_error = None
-        for attempt in range(50):
-            try:
-                while not analysis_p.ready():
-                    sleep(1.0)
-                return analysis_p.get(disable_sync_subtasks=False)
-            except ValueError as e:
-                raise e
-            except TimeoutError as e:
-                last_error = str(e)
-                print("error - AnalyticsClient._run_python_function_base()", str(type(e)), last_error)
-                sleep(0.5)
-                continue
-            except Exception as e:
-                last_error = str(e)
-                print("error u - AnalyticsClient._run_python_function_base()", str(type(e)), last_error)
-                sleep(0.5)
-                continue
-
-    def _get_update(self, action, item_id, paths=None, env=None, max_retries=50):
-        '''Remotely invoke the `analytics_worker.get_update()` method.'''
-        # Minimal check: item ID must be an int
-        if not isinstance(item_id, int):
-            raise ValueError('Invalid job or result id: {}'.format(item_id))
-        data_p = app.send_task('datacube.analytics.analytics_worker.get_update',
-                               args=(action, item_id, paths, env))
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                while not data_p.ready():
-                    sleep(1.0)
-                return data_p.get(disable_sync_subtasks=False)
-                # return data_p.get(disable_sync_subtasks=False)
-            except TimeoutError as e:
-                last_error = str(e)
-                print("error - AnalyticsClient._get_update()", str(type(e)), last_error)
-                sleep(0.5)
-                continue
-            except Exception as e:
-                last_error = str(e)
-                print("error u - AnalyticsClient._get_update()", str(type(e)), last_error)
-                sleep(0.5)
-                continue
-
-        # Exceeded max retries
-        raise RuntimeError('AnalyticsClient._get_update', 'exceeded max retries', last_error)
-
     def get_status(self, item, paths=None, env=None):
         '''Return the status of a job or result.'''
         if isinstance(item, Job):
@@ -192,7 +104,7 @@ class AnalyticsClient(object):
             action = UpdateActions.GET_RESULT_STATUS
         else:
             raise ValueError('Can only return status of Job or Results')
-        return self._get_update(action, item.id, paths, env)
+        return self._rpc._get_update(action, item.id, paths, env)
 
     def update_jro(self, jro, paths=None, env=None):
         '''Update a JRO with all available result metadata.
@@ -200,21 +112,19 @@ class AnalyticsClient(object):
         The metadata is collected from the store and used to update the jro's arrays using its
         `update_arrays()` method.
         '''
-        results = self._get_update(UpdateActions.GET_ALL_RESULTS, jro.job.id, paths, env)
+        results = self._rpc._get_update(UpdateActions.GET_ALL_RESULTS, jro.job.id, paths, env)
         jro.results.update_arrays(results)
 
     def get_result(self, result_id, paths=None, env=None):
         '''Return the metadata of a specific result.'''
-        return self._get_update(UpdateActions.GET_RESULT, result_id, paths, env)
+        return self._rpc._get_update(UpdateActions.GET_RESULT, result_id, paths, env)
 
     def get_user_data(self, job_id, paths=None, env=None):
         '''Return the user_data of a job.'''
-        return self._get_update(UpdateActions.GET_JOB_USER_DATA, job_id, paths, env)
+        return self._rpc._get_update(UpdateActions.GET_JOB_USER_DATA, job_id, paths, env)
 
     def __repr__(self):
-        active = app.control.inspect().active()
-        workers = [task['name'].split('.')[-1] for task in active.popitem()[1]] if active else []
-        return 'Analytics client: {} active workers: {}'.format(len(workers), workers)
+        return 'Analytics client: {}'.format(self._rpc)
 
     def cleanup(self, jro):
         '''Clean up S3 payloads based on the jro data.
