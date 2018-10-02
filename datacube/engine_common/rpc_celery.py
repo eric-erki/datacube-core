@@ -169,7 +169,7 @@ def monitor_jobs(decomposed, subjob_tasks, params_url):
 @app.task
 def get_update(action, item_id, paths=None, env=None):
     '''Return an update on a job or result.'''
-    return celery_analytics_worker.get_update(action, item_id, paths=None, env=None)
+    return celery_analytics_worker.get_update(action, item_id, paths, env)
 
 @app.task
 def run_python_function_base(params_url):
